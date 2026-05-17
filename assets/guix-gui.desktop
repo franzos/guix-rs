@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Guix GUI
+GenericName=Guix Frontend
+Comment=Search packages, manage generations, and reconfigure your Guix system
+Exec=guix-gui
+Icon=guix-gui
+Terminal=false
+Categories=System;PackageManager;Settings;Utility;
+Keywords=guix;package;manager;channel;system;
+StartupNotify=true

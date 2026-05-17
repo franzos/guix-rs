@@ -1,0 +1,15 @@
+name: hello
+version: 2.12.3
+outputs:
++ out: everything
+systems: x86_64-linux i686-linux
+dependencies: 
+location: gnu/packages/base.scm:100:2
+homepage: https://www.gnu.org/software/hello/
+license: GPL 3+
+synopsis: Example GNU package  
+description: GNU Hello prints the message "Hello, world!" and then exits.  It
++ serves as an example of standard GNU coding practices.  As such, it supports
++ command-line arguments, multiple languages, and so on.
+relevance: 30
+

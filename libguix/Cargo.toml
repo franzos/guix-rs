@@ -1,0 +1,38 @@
+[package]
+name = "libguix"
+description = "Unofficial Rust client library for GNU Guix."
+readme = "README.md"
+keywords = ["guix", "package-manager", "linux", "system-admin", "cli"]
+categories = ["api-bindings", "os::linux-apis"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+
+[features]
+default = ["tracing"]
+# Tests that actually shell out to a working `guix` binary on the host.
+live-tests = []
+# Emit `tracing` events from the repl actor and command helpers.
+tracing = ["dep:tracing"]
+# Reserved for M4: a `blocking` wrapper API. Currently gates nothing.
+blocking = []
+
+[dependencies]
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "io-util", "sync", "time", "signal", "net"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-core = "0.3"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+nix = { version = "0.31", features = ["signal"] }
+libc = "0.2"
+lexpr = "0.2"
+tracing = { version = "0.1", default-features = false, features = ["std"], optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util", "io-util", "sync", "time"] }
+tokio-test = "0.4"
+tempfile = "3"

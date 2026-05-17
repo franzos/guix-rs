@@ -1,0 +1,45 @@
+[package]
+name = "guix-gui"
+description = "Iced frontend for libguix (package management on Guix)."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "guix-gui"
+path = "src/main.rs"
+
+[features]
+default = []
+# When set, the GUI installs/removes into a temp profile rather than the
+# user's default. Used for smoke-testing the live-progress overlay without
+# mutating the host's actual `$GUIX_PROFILE`. Mirrors the
+# `install_hello_into_temp_profile` pattern in `libguix/tests/live.rs`.
+dev-temp-profile = []
+
+[dependencies]
+libguix = { path = "../libguix" }
+iced = { version = "0.14", features = ["tokio"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "fs"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+directories = "6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# vt100 backs the live-progress overlay. Guix emits progress via `\r`
+# overwrites + ANSI clear-line; a vt100 parser reconstructs the in-place
+# updating row the way a real terminal would, instead of flooding the log
+# with one line per percentage tick.
+vt100 = "0.16"
+# Insertion-order map for the structured progress summary — preserves
+# event order so the overlay can render most-recent-first by reversing.
+indexmap = "2"
+
+[dev-dependencies]
+tempfile = "3"

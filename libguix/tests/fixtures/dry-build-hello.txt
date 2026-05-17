@@ -1,0 +1,5 @@
+substitute: substitute: [Klooking for substitutes on 'https://substitutes.guix.gofranz.com'...   0.0%substitute: [Klooking for substitutes on 'https://substitutes.guix.gofranz.com'...  50.0%substitute: [Klooking for substitutes on 'https://substitutes.guix.gofranz.com'... 100.0%
+substitute: substitute: [Klooking for substitutes on 'https://cache-test.guix.moe'...   0.0%substitute: [Klooking for substitutes on 'https://cache-test.guix.moe'...  50.0%substitute: [Klooking for substitutes on 'https://cache-test.guix.moe'... 100.0%
+substitute: substitute: [Klooking for substitutes on 'https://cache-fi.guix.moe'...   0.0%substitute: [Klooking for substitutes on 'https://cache-fi.guix.moe'... 100.0%
+0.1 MB would be downloaded:
+  /gnu/store/ab584kfyc7pymc1cmdrkwzz3lwv86yf6-hello-2.12.3
