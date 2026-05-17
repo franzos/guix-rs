@@ -11,6 +11,13 @@
 
 Two pieces: a Rust library (`libguix`) that wraps the `guix` CLI and its machine-readable REPL, and a GUI (`guix-gui`, built on [Iced](https://iced.rs)) that uses the library to search packages, install / remove / upgrade them, and — with polkit — pull and reconfigure the system. The library surface also covers generation listing, switching, and rollback; the GUI doesn't expose those yet.
 
+<p align="center">
+  <img src="assets/search.png" alt="Search" width="22%">
+  <img src="assets/installed.png" alt="Installed" width="22%">
+  <img src="assets/updates.png" alt="Updates" width="22%">
+  <img src="assets/settings.png" alt="Settings" width="22%">
+</p>
+
 ## Install — GUI
 
 Packaged on the [panther channel](https://codeberg.org/gofranz/panther). With the channel configured:
