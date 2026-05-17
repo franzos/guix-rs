@@ -24,7 +24,7 @@ dev-temp-profile = []
 
 [dependencies]
 libguix = { path = "../libguix" }
-iced = { version = "0.14", features = ["tokio"] }
+iced = { version = "0.14", features = ["tokio", "svg"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "fs"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 directories = "6"

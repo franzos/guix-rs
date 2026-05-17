@@ -1,36 +1,43 @@
-use iced::font::Weight;
-use iced::widget::{button, column, row, scrollable, text, Column, Space};
-use iced::{Element, Font, Length};
+use iced::widget::{button, column, container, row, scrollable, text, Column, Space};
+use iced::{Element, Length};
 
 use crate::app::{App, Message};
+use crate::styles::{self, BOLD, MUTED};
 
 const SECONDARY_LINE_CHAR_LIMIT: usize = 90;
 
-const BOLD: Font = Font {
-    weight: Weight::Bold,
-    ..Font::DEFAULT
-};
-
 pub fn view(app: &App) -> Element<'_, Message> {
-    let header = row![
-        text(format!(
-            "{} installed packages",
-            app.installed.packages.len()
-        ))
-        .size(14),
-        button(text("Refresh")).on_press(Message::InstalledRefresh),
-    ]
-    .spacing(12);
+    let refresh = button(text("Refresh").size(13))
+        .padding([8, 16])
+        .style(styles::btn_secondary)
+        .on_press(Message::InstalledRefresh);
+    let header = App::view_header("Installed", Some(refresh.into()));
+
+    let count: Element<'_, Message> = text(format!(
+        "{} installed package{}",
+        app.installed.packages.len(),
+        if app.installed.packages.len() == 1 {
+            ""
+        } else {
+            "s"
+        }
+    ))
+    .size(12)
+    .color(MUTED)
+    .into();
 
     let status: Element<'_, Message> = if app.installed.refreshing {
-        text("Loading...").size(12).into()
+        text("Loading...").size(12).color(MUTED).into()
     } else if let Some(err) = &app.installed.error {
-        text(format!("Error: {err}")).size(12).into()
+        text(format!("Error: {err}"))
+            .size(12)
+            .color(styles::DANGER)
+            .into()
     } else {
         text("").size(12).into()
     };
 
-    let mut rows = Column::new().spacing(6);
+    let mut rows = Column::new().spacing(8);
     for p in &app.installed.packages {
         let store_path = p.store_path.display().to_string();
         let prefix = format!("{} ({}) ", p.version, p.output);
@@ -38,24 +45,31 @@ pub fn view(app: &App) -> Element<'_, Message> {
         let path_display = truncate_path_left(&store_path, budget.max(8));
         let secondary = format!("{prefix}{path_display}");
 
-        let card = column![
+        let info = column![
             text(p.name.clone()).font(BOLD).size(14),
-            text(secondary).size(11),
+            text(secondary).size(11).color(MUTED),
         ]
         .spacing(2);
 
-        rows = rows.push(
-            row![
-                card,
-                Space::new().width(Length::Fill),
-                button(text("Remove")).on_press(Message::RemoveRequested(p.name.clone())),
-            ]
-            .spacing(8)
-            .width(Length::Fill),
-        );
+        let remove_btn = button(text("Remove").size(12))
+            .padding([6, 14])
+            .style(styles::btn_danger)
+            .on_press(Message::RemoveRequested(p.name.clone()));
+
+        let card = container(
+            row![info, Space::new().width(Length::Fill), remove_btn]
+                .spacing(8)
+                .align_y(iced::Alignment::Center)
+                .width(Length::Fill),
+        )
+        .padding(14)
+        .width(Length::Fill)
+        .style(styles::card_flat);
+
+        rows = rows.push(card);
     }
 
-    column![header, status, scrollable(rows).height(Length::Fill)]
+    column![header, count, status, scrollable(rows).height(Length::Fill)]
         .spacing(8)
         .height(Length::Fill)
         .into()

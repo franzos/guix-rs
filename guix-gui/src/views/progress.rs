@@ -318,7 +318,7 @@ mod tests {
     use libguix::ProgressEvent;
 
     fn fake_op(stage_events: &[ProgressEvent]) -> (App, ActiveOp) {
-        let app = App::default();
+        let (app, _) = App::new();
         let kind = crate::operation_subscription::OpKind::Pull;
         let mut progress = ProgressSummary::new(kind);
         for e in stage_events {

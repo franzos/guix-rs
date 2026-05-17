@@ -18,14 +18,12 @@ pub enum Tab {
 }
 
 impl Tab {
-    pub const ALL: [Tab; 4] = [Tab::Search, Tab::Installed, Tab::Updates, Tab::System];
-
     pub fn label(self) -> &'static str {
         match self {
             Tab::Search => "Search",
             Tab::Installed => "Installed",
             Tab::Updates => "Updates",
-            Tab::System => "System",
+            Tab::System => "Settings",
         }
     }
 }

@@ -5,6 +5,7 @@ mod carrier;
 mod operation_subscription;
 mod progress_summary;
 mod settings;
+mod styles;
 mod terminal_buffer;
 mod util;
 mod views;

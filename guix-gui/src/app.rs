@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use iced::widget::{button, column, container, row, scrollable, text, tooltip, Column, Space};
+use iced::theme::Palette;
+use iced::widget::{button, column, container, row, scrollable, svg, text, tooltip, Column, Space};
 use iced::{Alignment, Element, Font, Length, Subscription, Task, Theme};
 use libguix::{
     CancelHandle, Channel, Guix, GuixError, InstalledPackage, Operation, PackageSummary,
@@ -12,6 +13,7 @@ use crate::carrier::Carrier;
 use crate::operation_subscription::{operation_subscription, OpEvent, OpId, OpKind, SharedOp};
 use crate::progress_summary::ProgressSummary;
 use crate::settings::{probe_first_run_config, Settings, Tab};
+use crate::styles::{self, BG, PRIMARY, TEXT};
 use crate::terminal_buffer::TerminalBuffer;
 use crate::views::{installed, search, system, updates};
 
@@ -46,7 +48,6 @@ pub fn bootstrap_help_message(
     s
 }
 
-#[derive(Default)]
 pub struct App {
     pub guix: Option<Guix>,
     pub discovery_error: Option<String>,
@@ -63,6 +64,8 @@ pub struct App {
     /// Gates `repl.interrupt()` — SIGINT during initial module
     /// expansion can half-load modules. See NOTES.md "SIGINT cancellation".
     pub warmup_done: bool,
+    /// Cached custom theme; cloned per frame by `App::theme`.
+    theme: Theme,
 }
 
 pub struct ActiveOp {
@@ -197,16 +200,35 @@ impl App {
             .as_ref()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default();
+        let theme = Theme::custom(
+            "GuixGold".to_string(),
+            Palette {
+                background: BG,
+                text: TEXT,
+                primary: PRIMARY,
+                success: styles::SUCCESS,
+                warning: styles::WARNING,
+                danger: styles::DANGER,
+            },
+        );
         let state = Self {
-            settings,
+            guix: None,
+            discovery_error: None,
             active_tab,
+            active_op: None,
+            terminal: TerminalBuffer::default(),
             show_log,
             debug_events,
+            settings,
+            search: SearchState::default(),
+            installed: InstalledState::default(),
+            updates: UpdatesState::default(),
             system: SystemState {
                 source_input,
                 ..Default::default()
             },
-            ..Default::default()
+            warmup_done: false,
+            theme,
         };
         let boot = Task::perform(
             async {
@@ -225,7 +247,7 @@ impl App {
     }
 
     pub fn theme(&self) -> Theme {
-        Theme::Dark
+        self.theme.clone()
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -773,17 +795,19 @@ impl App {
                 .into();
         }
 
-        let header = self.view_tab_bar();
+        let sidebar = self.view_sidebar();
         let body: Element<'_, Message> = match self.active_tab {
             Tab::Search => search::view(self),
             Tab::Installed => installed::view(self),
             Tab::Updates => updates::view(self),
             Tab::System => system::view(self),
         };
+        let body = container(body)
+            .padding(24)
+            .width(Length::Fill)
+            .height(Length::Fill);
 
-        let main: Element<'_, Message> = column![header, body]
-            .spacing(8)
-            .padding(12)
+        let main: Element<'_, Message> = row![sidebar, body]
             .width(Length::Fill)
             .height(Length::Fill)
             .into();
@@ -795,16 +819,86 @@ impl App {
         }
     }
 
-    fn view_tab_bar(&self) -> Element<'_, Message> {
-        let mut bar = row![].spacing(6).align_y(Alignment::Center);
-        for tab in Tab::ALL {
-            let mut btn = button(text(tab.label()));
-            if tab != self.active_tab {
-                btn = btn.on_press(Message::TabSelected(tab));
-            }
-            bar = bar.push(btn);
+    fn view_sidebar(&self) -> Element<'_, Message> {
+        let nav_btn = |icon: &'static str, tab: Tab| -> Element<'_, Message> {
+            let active = tab == self.active_tab;
+            button(
+                row![
+                    text(icon).size(16).width(Length::Fixed(24.0)),
+                    text(tab.label()).size(14),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .width(Length::Fill)
+            .padding([10, 14])
+            .style(styles::nav_btn(active))
+            .on_press(Message::TabSelected(tab))
+            .into()
+        };
+
+        // Primary nav — top-aligned.
+        let primary = column![
+            nav_btn("\u{1F50D}", Tab::Search),
+            nav_btn("\u{1F4E6}", Tab::Installed),
+            nav_btn("\u{2191}", Tab::Updates),
+        ]
+        .spacing(2);
+
+        // Brand mark — same isometric package icon as the README logo.
+        let icon = svg(svg::Handle::from_memory(
+            include_bytes!("../../assets/icon.svg").as_slice(),
+        ))
+        .width(Length::Fixed(32.0))
+        .height(Length::Fixed(32.0));
+        let brand = container(
+            row![icon, text("Guix").size(18).font(styles::BOLD).color(TEXT),]
+                .spacing(10)
+                .align_y(Alignment::Center),
+        )
+        .padding(iced::Padding {
+            top: 8.0,
+            right: 14.0,
+            bottom: 16.0,
+            left: 6.0,
+        });
+
+        let settings = nav_btn("\u{2699}", Tab::System);
+
+        let col = column![
+            brand,
+            primary,
+            Space::new().height(Length::Fill),
+            styles::separator(),
+            Space::new().height(Length::Fixed(8.0)),
+            settings,
+        ]
+        .spacing(2)
+        .padding(12)
+        .width(Length::Fixed(210.0));
+
+        container(col)
+            .height(Length::Fill)
+            .style(styles::sidebar)
+            .into()
+    }
+
+    /// Reusable page header — title on the left, optional action(s) on the
+    /// right. Views call this to keep the header treatment consistent.
+    pub(crate) fn view_header<'a>(
+        title: &'a str,
+        action: Option<Element<'a, Message>>,
+    ) -> Element<'a, Message> {
+        let title_widget = text(title).size(24).color(TEXT);
+        let mut header_row = row![title_widget, Space::new().width(Length::Fill)]
+            .align_y(Alignment::Center)
+            .spacing(8);
+        if let Some(a) = action {
+            header_row = header_row.push(a);
         }
-        bar.push(Space::new().width(Length::Fill)).into()
+        column![header_row, Space::new().height(Length::Fixed(8.0))]
+            .width(Length::Fill)
+            .into()
     }
 
     fn view_overlay(&self) -> Element<'_, Message> {
@@ -1114,9 +1208,7 @@ mod tests {
     /// chars with an ellipsis appended.
     #[test]
     fn search_error_summary_truncates_long_text() {
-        let long_line: String = std::iter::repeat('x')
-            .take(SEARCH_ERROR_SUMMARY_CAP + 50)
-            .collect();
+        let long_line: String = "x".repeat(SEARCH_ERROR_SUMMARY_CAP + 50);
         let err = build_search_error(long_line.clone());
         assert_eq!(err.summary.chars().count(), SEARCH_ERROR_SUMMARY_CAP);
         assert!(err.summary.ends_with('\u{2026}'));
