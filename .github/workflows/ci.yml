@@ -17,8 +17,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - run: cargo check -p libguix-rs
-      - run: cargo clippy -p libguix-rs --all-targets -- -D warnings
+      - run: cargo check -p libguix
+      - run: cargo clippy -p libguix --all-targets -- -D warnings
 
   test:
     runs-on: ubuntu-latest
@@ -28,7 +28,7 @@ jobs:
       # `live-tests` and the GUI crate (Iced/wgpu) are not built here —
       # the former needs a real `guix` binary; the latter needs the
       # X11/Wayland/Vulkan stack pinned in `manifest.scm`.
-      - run: cargo test -p libguix-rs
+      - run: cargo test -p libguix
 
   fmt:
     runs-on: ubuntu-latest
