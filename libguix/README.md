@@ -1,5 +1,8 @@
 # libguix
 
+[![Crates.io](https://img.shields.io/crates/v/libguix.svg)](https://crates.io/crates/libguix)
+[![Docs.rs](https://docs.rs/libguix/badge.svg)](https://docs.rs/libguix)
+
 Unofficial Rust client library for [GNU Guix](https://guix.gnu.org/).
 
 Wraps the `guix` CLI and its machine-readable REPL (`guix repl -t machine`) so you can drive package management, system administration, and builds from Rust without parsing human-readable output. Designed for long-running operations: every write returns an `Operation` with a coalesced event stream and a `CancelHandle`.

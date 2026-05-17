@@ -1,4 +1,4 @@
-# guix GUI
+# Guix GUI + Library (rust)
 
 <p align="center">
   <img src="assets/logo.svg" alt="guix GUI" width="280">
@@ -53,6 +53,9 @@ guix shell rust rust:cargo gcc-toolchain -- sh -c "CC=gcc cargo build --release 
 ```
 
 ## Usage — library
+
+[![Crates.io](https://img.shields.io/crates/v/libguix.svg)](https://crates.io/crates/libguix)
+[![Docs.rs](https://docs.rs/libguix/badge.svg)](https://docs.rs/libguix)
 
 ```toml
 [dependencies]
