@@ -1,5 +1,10 @@
 //! REPL-native install/remove/upgrade ops, exercised via a fake-`guix` shim.
 
+// `ENV_LOCK` is held across `.await` on purpose — it serialises tests that
+// mutate `$GUIX_PROFILE`, which would otherwise race. The awaits don't
+// re-enter env-var code, so there's no deadlock risk.
+#![allow(clippy::await_holding_lock)]
+
 use std::sync::Mutex;
 use std::time::Duration;
 
