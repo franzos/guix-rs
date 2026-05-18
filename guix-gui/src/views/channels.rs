@@ -45,7 +45,12 @@ pub fn view(app: &App) -> Element<'_, Message> {
         pending_toast(app)
     };
 
-    let mut col: Column<'_, Message> = column![header, intro].spacing(8);
+    // Sub-section heading. Today the tab only carries user-level
+    // channels; when system-level editing arrives (Phase 4) a parallel
+    // "SYSTEM CHANNELS" heading appears below with the same shape.
+    let user_channels_heading = text("USER CHANNELS").size(12).color(MUTED);
+
+    let mut col: Column<'_, Message> = column![header, intro, user_channels_heading].spacing(8);
 
     // Sub-mode toggle is rendered ONLY when discovery is enabled. When
     // off, the page is byte-identical to the pre-discovery layout —

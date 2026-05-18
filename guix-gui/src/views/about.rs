@@ -12,6 +12,7 @@ use crate::styles::{self, BOLD, MUTED, PRIMARY, TEXT};
 const REPO_URL: &str = "https://github.com/franzos/guix-rs";
 const FLATHUB_URL: &str = "https://flathub.org";
 const DEBIAN_SCREENSHOTS_URL: &str = "https://screenshots.debian.net";
+const TOYS_WHEREIS_URL: &str = "https://toys.whereis.social";
 
 pub fn view(_app: &App) -> Element<'_, Message> {
     let header = App::view_header("About", None);
@@ -72,6 +73,22 @@ pub fn view(_app: &App) -> Element<'_, Message> {
         .spacing(6),
     );
 
+    let discovery_card = section_card(
+        "Channel discovery",
+        column![
+            text(
+                "The Channels tab's Discover sub-mode browses Guix channels and \
+                 packages indexed by toys.whereis.social. Opt-in; requires network. \
+                 The catalog and its contributors remain the property of their \
+                 respective projects."
+            )
+            .size(12)
+            .color(MUTED),
+            link_row(TOYS_WHEREIS_URL),
+        ]
+        .spacing(6),
+    );
+
     let dependencies_card = section_card(
         "Built with",
         column![
@@ -96,6 +113,7 @@ pub fn view(_app: &App) -> Element<'_, Message> {
         source_card,
         license_card,
         third_party_card,
+        discovery_card,
         dependencies_card,
     ]
     .spacing(16);
