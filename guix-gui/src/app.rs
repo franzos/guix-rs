@@ -18,7 +18,7 @@ use crate::recommended::RECOMMENDED;
 use crate::settings::{probe_first_run_config, Settings, Tab};
 use crate::styles::{self, BG, PRIMARY, TEXT};
 use crate::terminal_buffer::TerminalBuffer;
-use crate::views::{home, installed, search, system, updates};
+use crate::views::{about, home, installed, search, system, updates};
 
 pub const CANCEL_PKEXEC_TOOLTIP: &str =
     "Cannot cancel privileged operations — the kernel doesn't allow signaling root-owned processes. Wait for it to complete.";
@@ -363,6 +363,7 @@ impl App {
                         self.spawn_pull_mtimes_refresh(),
                     ]),
                     Tab::System => self.spawn_system_load(),
+                    Tab::About => Task::none(),
                 };
                 // Always load the installed list at startup — the Search
                 // detail pane needs it to flip Install/Remove correctly.
@@ -1062,6 +1063,7 @@ impl App {
             Tab::Installed => installed::view(self),
             Tab::Updates => updates::view(self),
             Tab::System => system::view(self),
+            Tab::About => about::view(self),
         };
         let body = container(body)
             .padding(24)
@@ -1160,6 +1162,7 @@ impl App {
         });
 
         let settings = nav_btn("\u{2699}", Tab::System);
+        let about = nav_btn("\u{2139}", Tab::About);
 
         let col = column![
             brand,
@@ -1168,6 +1171,7 @@ impl App {
             styles::separator(),
             Space::new().height(Length::Fixed(8.0)),
             settings,
+            about,
         ]
         .spacing(2)
         .padding(12)

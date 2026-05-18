@@ -1,3 +1,4 @@
+pub mod about;
 pub mod home;
 pub mod installed;
 pub mod progress;

@@ -16,6 +16,7 @@ pub enum Tab {
     Installed,
     Updates,
     System,
+    About,
 }
 
 impl Tab {
@@ -26,6 +27,7 @@ impl Tab {
             Tab::Installed => "Installed",
             Tab::Updates => "Updates",
             Tab::System => "Settings",
+            Tab::About => "About",
         }
     }
 }
