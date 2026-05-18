@@ -1,4 +1,6 @@
-use iced::widget::{button, column, container, row, scrollable, text, text_input, Column, Space};
+use iced::widget::{
+    button, checkbox, column, container, row, scrollable, text, text_input, Column, Space,
+};
 use iced::{Element, Length};
 
 use crate::app::{App, Message};
@@ -183,7 +185,73 @@ pub fn view(app: &App) -> Element<'_, Message> {
     ]
     .spacing(8);
 
-    let body = column![header, general_section, advanced_section, channels_section].spacing(16);
+    // -- METADATA section: third-party icons + screenshots --
+    let meta = &app.settings.app_metadata;
+    let sub_enabled = meta.enabled;
+
+    let labeled_check = |label: &'static str,
+                         checked: bool,
+                         enabled: bool,
+                         on_toggle: fn(bool) -> Message|
+     -> Element<'_, Message> {
+        let cb = checkbox(checked)
+            .on_toggle_maybe(enabled.then_some(on_toggle))
+            .size(16);
+        let label_color = if enabled { styles::TEXT } else { MUTED };
+        row![cb, text(label).size(14).color(label_color)]
+            .spacing(8)
+            .align_y(iced::Alignment::Center)
+            .into()
+    };
+
+    let metadata_inner = column![
+        text("Icons & screenshots").size(16).font(BOLD),
+        text(
+            "Fetch icons and screenshots from third-party catalogs for selected \
+             search results. Opt-in; requires network access."
+        )
+        .size(12)
+        .color(MUTED),
+        Space::new().height(4),
+        labeled_check(
+            "Enable third-party metadata",
+            meta.enabled,
+            true,
+            Message::AppMetadataEnabledToggled,
+        ),
+        Space::new().height(4),
+        labeled_check(
+            "Flathub (flathub.org)",
+            meta.use_flathub,
+            sub_enabled,
+            Message::AppMetadataFlathubToggled,
+        ),
+        labeled_check(
+            "screenshots.debian.net",
+            meta.use_debian_screenshots,
+            sub_enabled,
+            Message::AppMetadataDebianToggled,
+        ),
+    ]
+    .spacing(6);
+
+    let metadata_section = column![
+        text("METADATA").size(12).color(MUTED),
+        container(metadata_inner)
+            .padding(20)
+            .width(Length::Fill)
+            .style(styles::card),
+    ]
+    .spacing(8);
+
+    let body = column![
+        header,
+        general_section,
+        metadata_section,
+        advanced_section,
+        channels_section
+    ]
+    .spacing(16);
 
     scrollable(body).height(Length::Fill).into()
 }

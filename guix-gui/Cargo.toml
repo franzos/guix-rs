@@ -24,7 +24,7 @@ dev-temp-profile = []
 
 [dependencies]
 libguix = { path = "../libguix" }
-iced = { version = "0.14", features = ["tokio", "svg"] }
+iced = { version = "0.14", features = ["tokio", "svg", "image"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "fs"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 directories = "6"
@@ -40,6 +40,10 @@ vt100 = "0.16"
 # Insertion-order map for the structured progress summary — preserves
 # event order so the overlay can render most-recent-first by reversing.
 indexmap = "2"
+# App metadata (icons + screenshots) fetched from Flathub / Debian.
+# Opt-in via settings — `rustls-tls` avoids a system OpenSSL dep so the
+# Guix build closure stays small.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
 [dev-dependencies]
 tempfile = "3"

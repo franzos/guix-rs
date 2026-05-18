@@ -38,6 +38,35 @@ pub struct Settings {
     pub custom_load_paths: Vec<PathBuf>,
     #[serde(default)]
     pub show_log_by_default: bool,
+    #[serde(default)]
+    pub app_metadata: AppMetadataSettings,
+}
+
+/// Opt-in fetch of icons + screenshots from third-party catalogs. Off by
+/// default — enabling it makes network requests to flathub.org /
+/// screenshots.debian.net when the user selects a search result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppMetadataSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub use_flathub: bool,
+    #[serde(default = "default_true")]
+    pub use_debian_screenshots: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for AppMetadataSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            use_flathub: true,
+            use_debian_screenshots: true,
+        }
+    }
 }
 
 impl Settings {
@@ -133,6 +162,7 @@ mod tests {
             source_config_path: Some(PathBuf::from("/home/me/dotfiles/config.scm")),
             custom_load_paths: vec![PathBuf::from("/home/me/extra-modules")],
             show_log_by_default: true,
+            app_metadata: AppMetadataSettings::default(),
         };
         original.save_to(&path).expect("save");
         let loaded = Settings::load_from(&path);

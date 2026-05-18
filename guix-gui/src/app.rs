@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use iced::theme::Palette;
@@ -9,6 +10,7 @@ use libguix::{
     SystemPullOptions, DEFAULT_SEARCH_LIMIT,
 };
 
+use crate::app_metadata::{AppMetadata, MetadataClient};
 use crate::carrier::Carrier;
 use crate::operation_subscription::{operation_subscription, OpEvent, OpId, OpKind, SharedOp};
 use crate::progress_summary::ProgressSummary;
@@ -66,6 +68,15 @@ pub struct App {
     pub warmup_done: bool,
     /// Cached custom theme; cloned per frame by `App::theme`.
     theme: Theme,
+    pub metadata_client: MetadataClient,
+    /// In-memory only — re-fetched each session. Keyed by guix package
+    /// name; `None` value means "in-flight", `Some` is the result
+    /// (which may itself be empty if both sources missed).
+    pub metadata_cache: HashMap<String, Option<AppMetadata>>,
+    /// Active screenshot lightbox. Bytes are cloned from the metadata
+    /// cache when opened so the overlay survives cache eviction
+    /// (e.g. toggling sources mid-view).
+    pub lightbox: Option<Vec<u8>>,
 }
 
 pub struct ActiveOp {
@@ -165,6 +176,17 @@ pub enum Message {
 
     InstallRequested(String),
 
+    AppMetadataLoaded {
+        name: String,
+        metadata: Carrier<AppMetadata>,
+    },
+    AppMetadataEnabledToggled(bool),
+    AppMetadataFlathubToggled(bool),
+    AppMetadataDebianToggled(bool),
+    LightboxOpened(Carrier<Vec<u8>>),
+    LightboxClosed,
+    OpenUrl(String),
+
     OpStarted {
         id: OpId,
         kind: OpKind,
@@ -229,6 +251,9 @@ impl App {
             },
             warmup_done: false,
             theme,
+            metadata_client: MetadataClient::new(),
+            metadata_cache: HashMap::new(),
+            lightbox: None,
         };
         let boot = Task::perform(
             async {
@@ -251,16 +276,31 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        match &self.active_op {
-            Some(op) if !op.finished => {
-                let ops = operation_subscription(op.kind, op.id, op.op_slot.clone())
-                    .map(Message::Progress);
-                let tick =
-                    iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::Tick);
-                Subscription::batch([ops, tick])
+        let mut subs: Vec<Subscription<Message>> = Vec::new();
+        if let Some(op) = &self.active_op {
+            if !op.finished {
+                subs.push(
+                    operation_subscription(op.kind, op.id, op.op_slot.clone())
+                        .map(Message::Progress),
+                );
+                subs.push(
+                    iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::Tick),
+                );
             }
-            _ => Subscription::none(),
         }
+        if self.lightbox.is_some() {
+            // ESC closes the lightbox — matches the convention every
+            // image viewer uses. Non-Escape keypresses map to `Tick`
+            // (a no-op) so the subscription stays cheap.
+            subs.push(iced::keyboard::listen().map(|evt| match evt {
+                iced::keyboard::Event::KeyPressed {
+                    key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                    ..
+                } => Message::LightboxClosed,
+                _ => Message::Tick,
+            }));
+        }
+        Subscription::batch(subs)
     }
 
     pub fn update(&mut self, msg: Message) -> Task<Message> {
@@ -396,7 +436,7 @@ impl App {
             }
             Message::SearchResultSelected(i) => {
                 self.search.selected = Some(i);
-                Task::none()
+                self.spawn_app_metadata_fetch(i)
             }
             Message::SearchErrorCopy => {
                 if let Some(err) = self.search.error.as_ref() {
@@ -520,6 +560,67 @@ impl App {
             Message::InstallRequested(name) => self.start_op(OpKind::Install, move |g| {
                 g.package().install(&[name.as_str()])
             }),
+
+            Message::AppMetadataLoaded { name, metadata } => {
+                if let Some(m) = metadata.take() {
+                    self.metadata_cache.insert(name, Some(m));
+                } else {
+                    // Carrier already consumed (shouldn't happen) — clear
+                    // the in-flight marker so we can retry on re-select.
+                    self.metadata_cache.remove(&name);
+                }
+                Task::none()
+            }
+            Message::AppMetadataEnabledToggled(v) => {
+                self.settings.app_metadata.enabled = v;
+                let _ = self.settings.save();
+                // Re-fetch for the currently-selected result so the
+                // panel populates immediately when the user enables it.
+                if let Some(i) = self.search.selected {
+                    return self.spawn_app_metadata_fetch(i);
+                }
+                Task::none()
+            }
+            Message::AppMetadataFlathubToggled(v) => {
+                self.settings.app_metadata.use_flathub = v;
+                let _ = self.settings.save();
+                // Drop cached results so the toggle takes effect on
+                // the next selection without a manual refresh.
+                self.metadata_cache.clear();
+                Task::none()
+            }
+            Message::AppMetadataDebianToggled(v) => {
+                self.settings.app_metadata.use_debian_screenshots = v;
+                let _ = self.settings.save();
+                self.metadata_cache.clear();
+                Task::none()
+            }
+            Message::LightboxOpened(c) => {
+                if let Some(bytes) = c.take() {
+                    self.lightbox = Some(bytes);
+                }
+                Task::none()
+            }
+            Message::LightboxClosed => {
+                self.lightbox = None;
+                Task::none()
+            }
+            Message::OpenUrl(url) => {
+                // Reject anything that isn't http(s) — defence in depth
+                // so a malicious package homepage can't smuggle a shell
+                // command past xdg-open's URL handler.
+                if !(url.starts_with("http://") || url.starts_with("https://")) {
+                    tracing::warn!(target: "guix_gui", "refusing to open non-http url: {url}");
+                    return Task::none();
+                }
+                // `spawn()` only fork+execs the helper — it doesn't
+                // wait for the browser — so a plain blocking call is
+                // already non-blocking from our perspective.
+                if let Err(e) = std::process::Command::new("xdg-open").arg(&url).spawn() {
+                    tracing::warn!(target: "guix_gui", "xdg-open failed: {e}");
+                }
+                Task::none()
+            }
 
             Message::OpStarted {
                 id,
@@ -701,6 +802,37 @@ impl App {
         )
     }
 
+    /// Kick off an icon+screenshot fetch for the selected search result,
+    /// unless the feature is off, the cache already has it, or the index
+    /// is out of range. In-flight requests are marked with `None` so
+    /// rapid selection changes don't queue duplicate fetches.
+    fn spawn_app_metadata_fetch(&mut self, index: usize) -> Task<Message> {
+        if !self.settings.app_metadata.enabled {
+            return Task::none();
+        }
+        let Some(p) = self.search.results.get(index) else {
+            return Task::none();
+        };
+        let name = p.name.clone();
+        if self.metadata_cache.contains_key(&name) {
+            return Task::none();
+        }
+        self.metadata_cache.insert(name.clone(), None);
+        let client = self.metadata_client.clone();
+        let cfg = self.settings.app_metadata.clone();
+        let fetch_name = name.clone();
+        Task::perform(
+            async move {
+                let m = client.fetch(&fetch_name, cfg).await;
+                Carrier::new(m)
+            },
+            move |metadata| Message::AppMetadataLoaded {
+                name: name.clone(),
+                metadata,
+            },
+        )
+    }
+
     fn spawn_system_load(&self) -> Task<Message> {
         let Some(g) = self.guix.clone() else {
             return Task::none();
@@ -814,9 +946,43 @@ impl App {
 
         if self.active_op.is_some() {
             self.view_overlay()
+        } else if let Some(bytes) = &self.lightbox {
+            self.view_lightbox(bytes)
         } else {
             main
         }
+    }
+
+    fn view_lightbox<'a>(&'a self, bytes: &'a [u8]) -> Element<'a, Message> {
+        use iced::widget::image as iced_image;
+        let handle = iced_image::Handle::from_bytes(bytes.to_vec());
+        let img = iced_image(handle)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .content_fit(iced::ContentFit::Contain);
+
+        let close_btn = button(text("Close (Esc)").size(13))
+            .padding([8, 16])
+            .style(styles::btn_secondary)
+            .on_press(Message::LightboxClosed);
+
+        let header = row![Space::new().width(Length::Fill), close_btn,].padding(12);
+
+        // Click-anywhere-on-background to dismiss: wrap the image in a
+        // button styled as a ghost so it doesn't draw a frame, then a
+        // click outside the image margins fires LightboxClosed.
+        let dismiss_layer = button(container(img).width(Length::Fill).height(Length::Fill))
+            .padding(24)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(styles::btn_ghost)
+            .on_press(Message::LightboxClosed);
+
+        container(column![header, dismiss_layer].spacing(0))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(styles::card)
+            .into()
     }
 
     fn view_sidebar(&self) -> Element<'_, Message> {

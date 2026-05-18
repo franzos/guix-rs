@@ -1,6 +1,7 @@
 //! Binary entry point for `guix-gui`.
 
 mod app;
+mod app_metadata;
 mod carrier;
 mod operation_subscription;
 mod progress_summary;
