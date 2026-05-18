@@ -9,11 +9,12 @@ use iced::widget::{button, column, container, row, scrollable, text, text_input,
 use iced::{Element, Length};
 use libguix::Channel;
 
-use crate::app::{App, ChannelsSubMode, Message};
+use crate::app::{should_render_remove_warning, App, ChannelsSubMode, Message, RollbackOffer};
 use crate::carrier::Carrier;
 use crate::settings::Tab;
 use crate::styles::{self, BOLD, MUTED};
 use guix_gui::discovery::{DiscoveredChannel, DiscoveredPackage};
+use libguix::KnownBug;
 
 pub fn view(app: &App) -> Element<'_, Message> {
     let refresh = button(text("Refresh").size(13))
@@ -34,7 +35,15 @@ pub fn view(app: &App) -> Element<'_, Message> {
 
     let path_strip = path_strip(app);
     let banner = store_managed_banner(app);
-    let toast = pending_toast(app);
+    let rollback = rollback_offer_card(app);
+    // The rollback offer takes precedence over the post-write toast —
+    // if a pull just failed, the toast that triggered it is stale and
+    // would offer a confusing second-pull CTA.
+    let toast = if rollback.is_some() {
+        None
+    } else {
+        pending_toast(app)
+    };
 
     let mut col: Column<'_, Message> = column![header, intro].spacing(8);
 
@@ -48,6 +57,9 @@ pub fn view(app: &App) -> Element<'_, Message> {
     col = col.push(path_strip);
     if let Some(b) = banner {
         col = col.push(b);
+    }
+    if let Some(r) = rollback {
+        col = col.push(r);
     }
     if let Some(t) = toast {
         col = col.push(t);
@@ -233,27 +245,130 @@ fn pending_toast(app: &App) -> Option<Element<'_, Message>> {
         );
     }
     let msg = app.channels.last_message.as_ref()?;
-    let pull_btn = button(text("Pull now").size(12))
-        .padding([6, 12])
-        .style(styles::btn_secondary)
-        .on_press(Message::FetchUserCatalogClicked);
     let dismiss = button(text("Dismiss").size(12))
         .padding([6, 12])
         .style(styles::btn_ghost)
         .on_press(Message::ChannelsToastDismissed);
-    let row_widget = row![
-        text(msg.clone()).size(13),
-        Space::new().width(Length::Fill),
-        pull_btn,
-        dismiss,
-    ]
-    .spacing(8)
-    .align_y(iced::Alignment::Center);
+
+    // Combined CTA when the Add originated from a Discover package row.
+    // Two buttons — "Pull, then install <pkg>" (the happy path) and
+    // "Pull only" (escape hatch if the user changed their mind).
+    let row_widget = if let Some(pkg) = app.channels.post_apply_install_prompt.clone() {
+        let pull_install = button(text(format!("Pull, then install {pkg}")).size(12))
+            .padding([6, 12])
+            .style(styles::btn_secondary)
+            .on_press(Message::ChannelsToastPullAndInstallClicked(pkg.clone()));
+        let pull_only = button(text("Pull only").size(12))
+            .padding([6, 12])
+            .style(styles::btn_ghost)
+            .on_press(Message::ChannelsToastPullClicked);
+        row![
+            text(msg.clone()).size(13),
+            Space::new().width(Length::Fill),
+            pull_install,
+            pull_only,
+            dismiss,
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center)
+    } else {
+        let pull_btn = button(text("Pull now").size(12))
+            .padding([6, 12])
+            .style(styles::btn_secondary)
+            .on_press(Message::ChannelsToastPullClicked);
+        row![
+            text(msg.clone()).size(13),
+            Space::new().width(Length::Fill),
+            pull_btn,
+            dismiss,
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center)
+    };
+
     Some(
         container(row_widget)
             .padding(12)
             .width(Length::Fill)
             .style(styles::card_flat)
+            .into(),
+    )
+}
+
+/// Post-pull-failure rollback CTA. Rendered in place of the "Pull now"
+/// toast when `ChannelsState::rollback_offer` is set — the toast would
+/// be stale at that point. The CTA never auto-restores; the user
+/// confirms explicitly.
+fn rollback_offer_card<'a>(app: &'a App) -> Option<Element<'a, Message>> {
+    let offer: &'a RollbackOffer = app.channels.rollback_offer.as_ref()?;
+    let dismiss = button(text("Keep changes").size(12))
+        .padding([6, 12])
+        .style(styles::btn_ghost)
+        .on_press(Message::ChannelsRollbackDismissed);
+
+    let title_label = match offer.bug {
+        Some(KnownBug::ChannelShadow74396) => "Pull failed — channel shadow bug (#74396).",
+        None => "Pull failed.",
+    };
+
+    let mut body_col: iced::widget::Column<'_, Message> = Column::new().spacing(4);
+    body_col = body_col.push(text(title_label).size(14).font(BOLD).color(styles::DANGER));
+
+    if offer.backup_path.is_some() {
+        body_col = body_col.push(
+            text(
+                "Your channels.scm has the new changes but Guix couldn't \
+                 fetch them. Restore the previous channels.scm?",
+            )
+            .size(12)
+            .color(MUTED),
+        );
+    } else {
+        // write_atomic always creates a .bak, so this branch is
+        // defensive — but if we reach it we explain plainly that
+        // there's nothing to restore.
+        body_col = body_col.push(
+            text("No previous channels.scm to restore.")
+                .size(12)
+                .color(MUTED),
+        );
+    }
+
+    // When a known bug is named, surface the canonical issue link
+    // beneath the explanatory text. Read-only — clickable via the same
+    // `OpenUrl` plumbing the package homepage CTA uses.
+    if let Some(bug) = offer.bug {
+        let url = bug.url();
+        let link = button(text(url).size(11).color(styles::PRIMARY))
+            .padding(0)
+            .style(styles::btn_ghost)
+            .on_press(Message::OpenUrl(url.to_string()));
+        body_col = body_col.push(link);
+    }
+
+    let actions: iced::widget::Row<'_, Message> = if offer.backup_path.is_some() {
+        let restore = button(text("Restore previous").size(12))
+            .padding([6, 12])
+            .style(styles::btn_secondary)
+            .on_press(Message::ChannelsRollbackConfirmed);
+        row![restore, dismiss].spacing(8)
+    } else {
+        // No backup — only the dismiss escape hatch is meaningful.
+        row![button(text("Dismiss").size(12))
+            .padding([6, 12])
+            .style(styles::btn_ghost)
+            .on_press(Message::ChannelsRollbackDismissed)]
+        .spacing(8)
+    };
+
+    body_col = body_col.push(Space::new().height(4));
+    body_col = body_col.push(actions);
+
+    Some(
+        container(body_col)
+            .padding(14)
+            .width(Length::Fill)
+            .style(styles::card)
             .into(),
     )
 }
@@ -397,12 +512,123 @@ fn channel_row<'a>(app: &'a App, ch: &'a Channel, writable: bool) -> Element<'a,
         details = details.push(text("introduction: (none)").size(11).color(styles::WARNING));
     }
 
-    let body = column![name_row, details].spacing(4);
+    let mut body: Column<'_, Message> = column![name_row, details].spacing(4);
+    if let Some(dialog) = remove_warning_dialog(app, ch) {
+        body = body.push(Space::new().height(6));
+        body = body.push(dialog);
+    }
     container(body)
         .padding(14)
         .width(Length::Fill)
         .style(styles::card_flat)
         .into()
+}
+
+/// Returns the expanded Remove warning dialog when:
+/// - this channel is the one with `pending_remove`, AND
+/// - the introspection cache reports at least one installed package
+///   sourced from this channel.
+///
+/// All other states (no pending, cache not loaded, cache empty for
+/// this channel) → `None`. The existing inline Confirm/Cancel in
+/// `per_row_action` handles those.
+///
+/// The dialog is informational — it never blocks the Remove. Whether 1
+/// package or 100 are affected, the user can proceed via "Remove
+/// channel anyway". See TODO.md "warn, don't block".
+fn remove_warning_dialog<'a>(app: &'a App, ch: &'a Channel) -> Option<Element<'a, Message>> {
+    if !should_render_remove_warning(
+        app.channels.pending_remove.as_deref(),
+        app.channels.installed_by_channel.as_ref(),
+        &ch.name,
+    ) {
+        return None;
+    }
+    // We treat the `(unknown)` bucket as "no info" for the named
+    // channel; the dialog only surfaces real channel names.
+    let affected = app
+        .channels
+        .installed_by_channel
+        .as_ref()
+        .and_then(|m| m.get(&ch.name))?;
+
+    let title = text(format!("Remove channel `{}`?", ch.name))
+        .size(14)
+        .font(BOLD);
+    let count = affected.len();
+    let intro = text(format!(
+        "{count} installed package{plural} come from this channel:",
+        plural = if count == 1 { "" } else { "s" },
+    ))
+    .size(12)
+    .color(MUTED);
+
+    // Bullet list of `name (version)` — no cap, scrollable when long.
+    let mut pkg_list: Column<'_, Message> = Column::new().spacing(2);
+    for p in affected {
+        pkg_list = pkg_list.push(text(format!("• {} ({})", p.name, p.version)).size(12));
+    }
+    let pkg_list_el: Element<'_, Message> = if affected.len() > 8 {
+        scrollable(pkg_list).height(Length::Fixed(180.0)).into()
+    } else {
+        pkg_list.into()
+    };
+
+    let explainer =
+        text("These will keep working but won't receive updates after the channel is removed.")
+            .size(12)
+            .color(MUTED);
+
+    // Command snippet — `name1 name2 ...` for copy-paste. We render
+    // it inside a `card_flat` container so it visually reads as a
+    // copyable block. iced text isn't selectable, but the snippet is
+    // short enough that copying via a contextual UI gesture (e.g. the
+    // overlay Copy button pattern) is overkill here; users can
+    // re-type a 2-3-word command without much trouble.
+    let names_joined: String = affected
+        .iter()
+        .map(|p| p.name.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let cmd_label = text("To uninstall them along with the channel:")
+        .size(12)
+        .color(MUTED);
+    let cmd_snippet = container(text(format!("guix package -r {names_joined}")).size(12))
+        .padding(8)
+        .width(Length::Fill)
+        .style(styles::card_flat);
+
+    let confirm = button(text("Remove channel anyway").size(12))
+        .padding([6, 12])
+        .style(styles::btn_danger)
+        .on_press(Message::ChannelsRemoveConfirmed(ch.name.clone()));
+    let cancel = button(text("Cancel").size(12))
+        .padding([6, 12])
+        .style(styles::btn_ghost)
+        .on_press(Message::ChannelsRemoveCancelled);
+    let actions = row![confirm, cancel].spacing(8);
+
+    let dialog = column![
+        title,
+        intro,
+        pkg_list_el,
+        Space::new().height(4),
+        explainer,
+        Space::new().height(4),
+        cmd_label,
+        cmd_snippet,
+        Space::new().height(6),
+        actions,
+    ]
+    .spacing(4);
+
+    Some(
+        container(dialog)
+            .padding(12)
+            .width(Length::Fill)
+            .style(styles::card)
+            .into(),
+    )
 }
 
 fn per_row_action<'a>(app: &'a App, ch: &'a Channel, writable: bool) -> Element<'a, Message> {
@@ -413,6 +639,18 @@ fn per_row_action<'a>(app: &'a App, ch: &'a Channel, writable: bool) -> Element<
     }
     let pending = app.channels.pending_remove.as_deref() == Some(ch.name.as_str());
     if pending {
+        // If the warning dialog is going to render below the row, its
+        // own Remove/Cancel actions take precedence — skip the inline
+        // pair to avoid two side-by-side confirms. The branch matches
+        // the `remove_warning_dialog` predicate.
+        let warning_will_render = should_render_remove_warning(
+            app.channels.pending_remove.as_deref(),
+            app.channels.installed_by_channel.as_ref(),
+            &ch.name,
+        );
+        if warning_will_render {
+            return text("see warning below").size(11).color(MUTED).into();
+        }
         let confirm = button(text("Confirm remove").size(11))
             .padding([4, 10])
             .style(styles::btn_danger)
@@ -647,17 +885,21 @@ fn package_row<'a>(app: &'a App, p: &'a DiscoveredPackage) -> Element<'a, Messag
         .unwrap_or(true);
 
     let cta: Element<'_, Message> = if already_present {
-        // Phase 2b ships Add only — wiring the actual install is a
-        // Phase 3 follow-up; surface the affordance as disabled so
-        // the user knows it's coming.
+        // Channel already added — direct install via the existing
+        // install plumbing (same message the Search tab uses).
+        let on_press = (!app.channels.saving).then(|| Message::InstallRequested(p.name.clone()));
         button(text("Install").size(11))
             .padding([4, 10])
-            .style(styles::btn_ghost)
+            .style(styles::btn_secondary)
+            .on_press_maybe(on_press)
             .into()
     } else {
         let parsed = providing.and_then(|d| d.to_channel());
         let on_press = match (writable, parsed) {
-            (true, Some(ch)) => Some(Message::DiscoverAddClicked(Carrier::new(ch))),
+            (true, Some(ch)) => Some(Message::DiscoverAddAndInstallClicked(
+                Carrier::new(ch),
+                p.name.clone(),
+            )),
             _ => None,
         };
         button(text("Add channel & install").size(11))

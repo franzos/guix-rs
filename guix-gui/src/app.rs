@@ -6,7 +6,7 @@ use iced::widget::{button, column, container, row, scrollable, svg, text, toolti
 use iced::{Alignment, Element, Font, Length, Subscription, Task, Theme};
 use libguix::{
     CancelHandle, Channel, ChannelOp, ChannelsError, ChannelsFile, Guix, GuixError,
-    InstalledPackage, Operation, PackageSummary, ProgressEvent, ProgressStream, PullOps,
+    InstalledPackage, KnownBug, Operation, PackageSummary, ProgressEvent, ProgressStream, PullOps,
     ReconfigureOptions, SearchFastResult, SystemPullOptions, DEFAULT_SEARCH_LIMIT,
 };
 
@@ -101,6 +101,12 @@ pub struct ActiveOp {
     pub finished: bool,
     pub bootstrap_likely: bool,
     pub progress: ProgressSummary,
+    /// Sticky flag — set the first time we observe
+    /// `ProgressEvent::KnownBug(ChannelShadow74396)` in the operation's
+    /// progress stream. Consumed by the channels-tab rollback offer to
+    /// attach bug context to the CTA when a Channels-tab-triggered pull
+    /// fails with #74396 in flight.
+    pub channel_shadow_seen: bool,
 }
 
 #[derive(Default)]
@@ -214,6 +220,47 @@ pub struct ChannelsState {
     /// When set, the Add flow renders a confirmation card showing
     /// name/url/branch/commit/fingerprint before writing.
     pub discover_pending_add: Option<Channel>,
+    /// Paired with `discover_pending_add` — when the user clicked
+    /// "Add channel & install" on a package row, the package's name is
+    /// stashed here so the post-apply toast can offer the combined
+    /// "Pull, then install <pkg>" CTA. `None` when the Add originated
+    /// from the channel row's "Add" button (no install follow-up).
+    pub discover_pending_install: Option<String>,
+    /// When true, the post-apply toast renders the combined
+    /// "Pull, then install <pkg>" / "Pull only" CTA instead of the bare
+    /// "Pull now" button. Cleared alongside the toast.
+    pub post_apply_install_prompt: Option<String>,
+    /// Package name to install after a Channels-tab-triggered user pull
+    /// succeeds. Set when the user clicks the combined CTA. Cleared on
+    /// pull completion (success or failure) regardless of outcome —
+    /// failure surfaces the rollback offer instead and never auto-installs.
+    pub pending_install: Option<String>,
+    /// Marks the next `OpKind::Pull` completion as belonging to a
+    /// channels-tab edit. On non-zero exit we then surface the rollback
+    /// offer; on success we honour `pending_install` if set.
+    pub pending_pull_after_write: bool,
+    /// When `Some`, the Channels tab renders the rollback CTA in the
+    /// header area, replacing the post-write "Pull now" toast.
+    pub rollback_offer: Option<RollbackOffer>,
+    /// Cache of installed packages bucketed by source channel — backs
+    /// the per-channel Remove warning dialog. `None` while loading or
+    /// never fetched; `Some(empty)` when the lookup failed (so we
+    /// don't retry every paint). Invalidated on Install/Remove/Upgrade
+    /// completion so a fresh dialog re-fetches.
+    pub installed_by_channel: Option<HashMap<String, Vec<InstalledPackage>>>,
+    /// Race guard for the introspection fetch — true between dispatch
+    /// and reply so a second concurrent trigger doesn't queue.
+    pub installed_by_channel_loading: bool,
+}
+
+/// State for the post-pull-failure rollback CTA. The `.bak` snapshot is
+/// captured at offer-creation time so a concurrent edit can't shift it
+/// under the user. `bug` is set when the failed pull's progress stream
+/// surfaced a known upstream bug worth naming in the CTA.
+#[derive(Debug, Clone)]
+pub struct RollbackOffer {
+    pub backup_path: Option<PathBuf>,
+    pub bug: Option<KnownBug>,
 }
 
 /// Channels tab sub-mode. Only Discover requires opt-in; Installed is
@@ -346,6 +393,10 @@ pub enum Message {
     ChannelsAddIntroFprChanged(String),
     ChannelsApplyCompleted(Result<ChannelsFileLoad, String>),
     ChannelsToastDismissed,
+    /// Best-effort introspection that maps installed packages to their
+    /// source channel — backs the Remove warning dialog. On failure
+    /// we store an empty map (don't retry) and don't surface an error.
+    ChannelsInstalledByChannelLoaded(Result<HashMap<String, Vec<InstalledPackage>>, String>),
 
     // -- Discover sub-mode (Channels tab) ------------------------------
     DiscoveryEnabledToggled(bool),
@@ -358,8 +409,24 @@ pub enum Message {
         result: Result<Carrier<Vec<DiscoveredPackage>>, String>,
     },
     DiscoverAddClicked(Carrier<Channel>),
+    /// Sibling of `DiscoverAddClicked` carrying the *package* name that
+    /// the user clicked from. Stashed so that after the channel write
+    /// succeeds we can offer "Pull, then install <pkg>" in one tap.
+    DiscoverAddAndInstallClicked(Carrier<Channel>, String),
     DiscoverAddCancelled,
     DiscoverAddConfirmed,
+
+    /// "Pull now" from the post-write Channels-tab toast. Wraps
+    /// `FetchUserCatalogClicked` plus the side effect of flagging the
+    /// next pull completion as belonging to a channels-tab edit, so a
+    /// non-zero exit surfaces the rollback offer.
+    ChannelsToastPullClicked,
+    /// "Pull, then install <pkg>" from the combined Discover-add toast.
+    /// Stashes the package name in `pending_install` so the next pull
+    /// completion auto-fires `InstallRequested(name)` on success.
+    ChannelsToastPullAndInstallClicked(String),
+    ChannelsRollbackConfirmed,
+    ChannelsRollbackDismissed,
 
     InstallRequested(String),
 
@@ -575,8 +642,17 @@ impl App {
                         self.spawn_channels_refresh(),
                         self.spawn_pull_mtimes_refresh(),
                     ]),
-                    Tab::Channels if self.channels.file.is_none() && !self.channels.loading => {
-                        self.spawn_channels_file_load()
+                    Tab::Channels => {
+                        let mut tasks: Vec<Task<Message>> = Vec::new();
+                        if self.channels.file.is_none() && !self.channels.loading {
+                            tasks.push(self.spawn_channels_file_load());
+                        }
+                        if self.channels.installed_by_channel.is_none()
+                            && !self.channels.installed_by_channel_loading
+                        {
+                            tasks.push(self.spawn_installed_by_channel_fetch());
+                        }
+                        Task::batch(tasks)
                     }
                     Tab::System if self.system.current_config_display.is_none() => {
                         self.spawn_system_load()
@@ -829,6 +905,16 @@ impl App {
             Message::ChannelsRemoveClicked(name) => {
                 self.channels.pending_remove = Some(name);
                 self.channels.last_message = None;
+                // Kick off the introspection fetch only when we don't
+                // already have one (the cache survives across opens
+                // until an install/remove/upgrade invalidates it). The
+                // dialog renders the minimal Confirm/Cancel while the
+                // fetch is in flight — never blocks Remove.
+                if self.channels.installed_by_channel.is_none()
+                    && !self.channels.installed_by_channel_loading
+                {
+                    return self.spawn_installed_by_channel_fetch();
+                }
                 Task::none()
             }
             Message::ChannelsRemoveCancelled => {
@@ -908,8 +994,18 @@ impl App {
                 self.channels.backup_path = load.backup_path;
                 self.channels.error = None;
                 self.channels.add_form.clear();
-                self.channels.last_message =
-                    Some("Channels updated. Pull now to fetch the new catalog.".into());
+                // Pop the install pairing so a later add (without
+                // install) doesn't accidentally inherit it.
+                let pkg = self.channels.discover_pending_install.take();
+                if let Some(name) = pkg {
+                    self.channels.post_apply_install_prompt = Some(name.clone());
+                    self.channels.last_message =
+                        Some(format!("Channel added. Pull, then install {name}?"));
+                } else {
+                    self.channels.post_apply_install_prompt = None;
+                    self.channels.last_message =
+                        Some("Channels updated. Pull now to fetch the new catalog.".into());
+                }
                 Task::none()
             }
             Message::ChannelsApplyCompleted(Err(e)) => {
@@ -919,6 +1015,25 @@ impl App {
             }
             Message::ChannelsToastDismissed => {
                 self.channels.last_message = None;
+                self.channels.post_apply_install_prompt = None;
+                Task::none()
+            }
+            Message::ChannelsInstalledByChannelLoaded(result) => {
+                self.channels.installed_by_channel_loading = false;
+                // Failure is silent — store an empty map so the next
+                // open doesn't trigger another doomed fetch. The Remove
+                // dialog falls through to its minimal Confirm/Cancel
+                // branch when the cache is empty.
+                self.channels.installed_by_channel = Some(match result {
+                    Ok(m) => m,
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "guix_gui",
+                            "installed_by_channel introspection failed: {e}",
+                        );
+                        HashMap::new()
+                    }
+                });
                 Task::none()
             }
 
@@ -935,6 +1050,7 @@ impl App {
                     self.channels.discover_query.clear();
                     self.channels.discover_error = None;
                     self.channels.discover_pending_add = None;
+                    self.channels.discover_pending_install = None;
                     self.channels.discover_channels_loading = false;
                     self.channels.discover_packages_loading = false;
                 }
@@ -1022,18 +1138,58 @@ impl App {
             Message::DiscoverAddClicked(c) => {
                 if let Some(ch) = c.take() {
                     self.channels.discover_pending_add = Some(ch);
+                    // Plain "Add" — no install follow-up. Clear any
+                    // stale install pairing from a previous
+                    // package-row click that was never confirmed.
+                    self.channels.discover_pending_install = None;
+                }
+                Task::none()
+            }
+            Message::DiscoverAddAndInstallClicked(c, pkg_name) => {
+                if let Some(ch) = c.take() {
+                    self.channels.discover_pending_add = Some(ch);
+                    self.channels.discover_pending_install = Some(pkg_name);
                 }
                 Task::none()
             }
             Message::DiscoverAddCancelled => {
                 self.channels.discover_pending_add = None;
+                self.channels.discover_pending_install = None;
                 Task::none()
             }
             Message::DiscoverAddConfirmed => {
                 let Some(ch) = self.channels.discover_pending_add.take() else {
                     return Task::none();
                 };
+                // Carry the install pairing into the apply flow — read
+                // on `ChannelsApplyCompleted` to decide whether to
+                // render the combined CTA.
                 self.spawn_channels_apply(ChannelOp::AddChannel(ch))
+            }
+            Message::ChannelsToastPullClicked => {
+                self.channels.pending_pull_after_write = true;
+                self.channels.pending_install = None;
+                self.channels.last_message = None;
+                self.channels.post_apply_install_prompt = None;
+                self.update(Message::FetchUserCatalogClicked)
+            }
+            Message::ChannelsToastPullAndInstallClicked(name) => {
+                self.channels.pending_pull_after_write = true;
+                self.channels.pending_install = Some(name);
+                self.channels.last_message = None;
+                self.channels.post_apply_install_prompt = None;
+                self.update(Message::FetchUserCatalogClicked)
+            }
+            Message::ChannelsRollbackConfirmed => {
+                // Reuse the existing restore async path — same
+                // semantics, just triggered from the rollback offer
+                // rather than the "Restore last backup" button.
+                self.channels.rollback_offer = None;
+                self.spawn_channels_restore()
+            }
+            Message::ChannelsRollbackDismissed => {
+                self.channels.rollback_offer = None;
+                Task::none()
             }
 
             Message::InstallRequested(name) => self.start_op(OpKind::Install, move |g| {
@@ -1174,6 +1330,7 @@ impl App {
                     finished: false,
                     bootstrap_likely: false,
                     progress: ProgressSummary::new(kind),
+                    channel_shadow_seen: false,
                 });
                 Task::none()
             }
@@ -1186,6 +1343,9 @@ impl App {
                     for evt in &batch {
                         if let ProgressEvent::ExitSummary { code, .. } = evt {
                             op.final_code = Some(*code);
+                        }
+                        if let ProgressEvent::KnownBug(KnownBug::ChannelShadow74396) = evt {
+                            op.channel_shadow_seen = true;
                         }
                         if !op.bootstrap_likely {
                             if let ProgressEvent::Line {
@@ -1250,9 +1410,71 @@ impl App {
                         if matches!(op.kind, OpKind::Install | OpKind::Remove | OpKind::Upgrade)
                             && op.final_code == Some(0)
                 );
+                // Profile-mutating ops invalidate the
+                // installed-by-channel cache. We invalidate on any
+                // completion (success or failure) of these kinds
+                // because a partial run can still leave the profile
+                // changed; the next dialog open re-fetches.
+                if matches!(
+                    self.active_op.as_ref(),
+                    Some(op)
+                        if matches!(op.kind, OpKind::Install | OpKind::Remove | OpKind::Upgrade)
+                ) {
+                    self.channels.installed_by_channel = None;
+                }
+                // Channels-tab continuation: did the pull we just
+                // finished originate from a channels-tab edit? Decide
+                // BEFORE flipping `op.finished` so we can read the
+                // active op's state cleanly.
+                let channels_pull_outcome: Option<(bool, bool)> = self
+                    .active_op
+                    .as_ref()
+                    .filter(|op| op.kind == OpKind::Pull && self.channels.pending_pull_after_write)
+                    .map(|op| (op.final_code == Some(0), op.channel_shadow_seen));
+
                 if let Some(op) = self.active_op.as_mut() {
                     op.finished = true;
                 }
+
+                // Branching policy:
+                // 1. Channels-tab pull SUCCESS — clear pending flags, fire
+                //    the deferred install if requested, and run the
+                //    standard post-pull refresh tasks.
+                // 2. Channels-tab pull FAILURE — drop any deferred install
+                //    (rollback takes precedence) and stage the rollback
+                //    offer with optional bug context. No refresh.
+                // 3. Anything else — preserve the pre-existing behaviour.
+                if let Some((success, shadow_seen)) = channels_pull_outcome {
+                    let pending_install = self.channels.pending_install.take();
+                    self.channels.pending_pull_after_write = false;
+                    // Clear the post-write toast — it's stale at this
+                    // point regardless of outcome.
+                    self.channels.last_message = None;
+                    self.channels.post_apply_install_prompt = None;
+                    if success {
+                        let mut tasks: Vec<Task<Message>> = vec![
+                            self.spawn_channels_refresh(),
+                            self.spawn_pull_mtimes_refresh(),
+                        ];
+                        if let Some(name) = pending_install {
+                            tasks.push(Task::done(Message::InstallRequested(name)));
+                        }
+                        return Task::batch(tasks);
+                    }
+                    // Failure path — drop any pending install (handled
+                    // by the early `take()`) and stage the rollback CTA.
+                    let bug = if shadow_seen {
+                        Some(KnownBug::ChannelShadow74396)
+                    } else {
+                        None
+                    };
+                    self.channels.rollback_offer = Some(RollbackOffer {
+                        backup_path: self.channels.backup_path.clone(),
+                        bug,
+                    });
+                    return Task::none();
+                }
+
                 if refresh_after_pull {
                     Task::batch([
                         self.spawn_channels_refresh(),
@@ -1407,6 +1629,29 @@ impl App {
         Task::perform(
             async move { load_channels_file(path_override).await },
             Message::ChannelsFileLoaded,
+        )
+    }
+
+    /// Best-effort introspection over the user's profile manifest,
+    /// bucketing installed packages by source channel. Cache is held
+    /// in `ChannelsState::installed_by_channel`; failures resolve to
+    /// an empty map so the next open doesn't retry on every paint.
+    fn spawn_installed_by_channel_fetch(&mut self) -> Task<Message> {
+        let Some(g) = self.guix.clone() else {
+            return Task::none();
+        };
+        if self.channels.installed_by_channel_loading {
+            return Task::none();
+        }
+        self.channels.installed_by_channel_loading = true;
+        Task::perform(
+            async move {
+                g.package()
+                    .installed_by_channel()
+                    .await
+                    .map_err(|e| format!("{e}"))
+            },
+            Message::ChannelsInstalledByChannelLoaded,
         )
     }
 
@@ -1858,6 +2103,38 @@ pub(crate) fn op_supports_cancel(kind: OpKind) -> bool {
     !matches!(kind, OpKind::SystemPull | OpKind::Reconfigure)
 }
 
+/// Returns `true` when the Channels tab should expand the row's
+/// confirmation into the warning dialog (channel name + affected
+/// package list + "Remove channel anyway" / Cancel). The dialog
+/// surfaces ONLY when:
+///
+/// - the user has armed Remove on this exact channel
+///   (`pending_remove == Some(ch_name)`), AND
+/// - the introspection cache has loaded (`Some`), AND
+/// - the cache reports at least one installed package sourced from
+///   this channel.
+///
+/// All other states — different channel armed, cache not loaded
+/// (`None`), or cache loaded but empty for this channel — return
+/// `false`, and the existing minimal inline Confirm/Cancel renders
+/// instead. The dialog never blocks Remove; the cache miss path is a
+/// deliberate fallthrough so a slow introspection fetch can't lock
+/// the user out of removing a channel.
+#[must_use]
+pub fn should_render_remove_warning(
+    pending_remove: Option<&str>,
+    installed_by_channel: Option<&HashMap<String, Vec<InstalledPackage>>>,
+    channel_name: &str,
+) -> bool {
+    if pending_remove != Some(channel_name) {
+        return false;
+    }
+    let Some(map) = installed_by_channel else {
+        return false;
+    };
+    map.get(channel_name).is_some_and(|v| !v.is_empty())
+}
+
 /// Maps a `ChannelsError` to a human-readable string for the GUI. We
 /// flatten to `String` early so the message types stay simple and the
 /// `Display` impl on `ChannelsError` (which already carries line/column
@@ -1974,6 +2251,7 @@ mod tests {
             finished: false,
             bootstrap_likely: false,
             progress: ProgressSummary::new(crate::operation_subscription::OpKind::Install),
+            channel_shadow_seen: false,
         });
         let _sub = app.subscription();
     }
@@ -1995,6 +2273,7 @@ mod tests {
             finished: false,
             bootstrap_likely: false,
             progress: ProgressSummary::new(OpKind::Pull),
+            channel_shadow_seen: false,
         });
 
         let batch = vec![
@@ -2119,6 +2398,7 @@ mod tests {
             finished: false,
             bootstrap_likely: false,
             progress: ProgressSummary::new(OpKind::Pull),
+            channel_shadow_seen: false,
         });
         let batch = vec![ProgressEvent::Line {
             stream: ProgressStream::Stderr,
@@ -2128,5 +2408,338 @@ mod tests {
         let _ = app.update(Message::Progress(OpEvent::Progress(batch)));
         let joined = app.terminal.rows().join("\n");
         assert!(joined.contains("[repl-op]"), "rows: {joined}");
+    }
+
+    // --- Phase 3a — pull integration polish --------------------------
+    //
+    // The async pull path itself can't run offline (no `guix` actor),
+    // so these tests exercise only the in-memory state machine the
+    // Channels tab depends on: the pending-install pairing, the
+    // pending-pull-after-write flag, and the rollback-offer assembly.
+    // They don't touch `start_op` — instead they pre-populate
+    // `active_op` to mimic the moment the pull subscription finishes.
+
+    use crate::operation_subscription::{OpEvent, OpId, OpKind, SharedOp};
+
+    /// Helper: build a finished-pull `ActiveOp` with a specific exit
+    /// code and bug flag. Mirrors what `Message::Progress` would have
+    /// produced by the time `Finished` arrives.
+    fn finished_pull_op(final_code: Option<i32>, channel_shadow_seen: bool) -> ActiveOp {
+        ActiveOp {
+            id: OpId(1),
+            kind: OpKind::Pull,
+            cancel: None,
+            op_slot: SharedOp::new_empty_for_tests(),
+            final_code,
+            finished: false,
+            bootstrap_likely: false,
+            progress: ProgressSummary::new(OpKind::Pull),
+            channel_shadow_seen,
+        }
+    }
+
+    /// Progress(KnownBug) flips the sticky `channel_shadow_seen` flag.
+    /// Subsequent unrelated events don't clear it.
+    #[test]
+    fn channel_shadow_event_sets_sticky_flag() {
+        let (mut app, _) = App::new();
+        app.active_op = Some(finished_pull_op(None, false));
+        let batch = vec![
+            ProgressEvent::KnownBug(KnownBug::ChannelShadow74396),
+            ProgressEvent::Line {
+                stream: ProgressStream::Stderr,
+                text: "ordinary line".into(),
+                redraw: false,
+            },
+        ];
+        let _ = app.update(Message::Progress(OpEvent::Progress(batch)));
+        assert!(app.active_op.as_ref().unwrap().channel_shadow_seen);
+    }
+
+    /// Channels-tab pull succeeds with no pending install → pending
+    /// flags clear, no rollback offer is raised.
+    #[test]
+    fn channels_pull_success_clears_pending_and_no_rollback() {
+        let (mut app, _) = App::new();
+        app.channels.pending_pull_after_write = true;
+        app.channels.last_message = Some("toast".into());
+        app.active_op = Some(finished_pull_op(Some(0), false));
+        let _ = app.update(Message::Progress(OpEvent::Finished));
+        assert!(!app.channels.pending_pull_after_write);
+        assert!(app.channels.pending_install.is_none());
+        assert!(app.channels.rollback_offer.is_none());
+        assert!(app.channels.last_message.is_none());
+    }
+
+    /// Channels-tab pull succeeds with a pending install → an
+    /// `InstallRequested` is queued and the pending state clears.
+    #[test]
+    fn channels_pull_success_fires_install_when_pending() {
+        let (mut app, _) = App::new();
+        app.channels.pending_pull_after_write = true;
+        app.channels.pending_install = Some("nyxt".into());
+        app.active_op = Some(finished_pull_op(Some(0), false));
+        // We can't introspect the returned `Task` directly, but we can
+        // assert the state mutations the handler is responsible for.
+        let _ = app.update(Message::Progress(OpEvent::Finished));
+        assert!(!app.channels.pending_pull_after_write);
+        // `pending_install` is consumed by the handler — the install
+        // message is queued via `Task::done`.
+        assert!(app.channels.pending_install.is_none());
+        assert!(app.channels.rollback_offer.is_none());
+    }
+
+    /// Channels-tab pull fails → the rollback offer is staged with the
+    /// captured backup path and no install fires even if one was
+    /// pending. The offer carries no bug context when the channel-
+    /// shadow detector didn't trip.
+    #[test]
+    fn channels_pull_failure_stages_rollback_without_bug() {
+        let (mut app, _) = App::new();
+        app.channels.pending_pull_after_write = true;
+        app.channels.pending_install = Some("emacs".into());
+        app.channels.backup_path = Some(PathBuf::from("/tmp/channels.scm.bak"));
+        app.active_op = Some(finished_pull_op(Some(1), false));
+        let _ = app.update(Message::Progress(OpEvent::Finished));
+        assert!(!app.channels.pending_pull_after_write);
+        assert!(app.channels.pending_install.is_none());
+        let offer = app.channels.rollback_offer.as_ref().expect("rollback");
+        assert_eq!(
+            offer.backup_path.as_deref(),
+            Some(Path::new("/tmp/channels.scm.bak"))
+        );
+        assert!(offer.bug.is_none());
+    }
+
+    /// Channels-tab pull fails AND a channel-shadow bug was observed →
+    /// the rollback offer carries the bug for the CTA to surface.
+    #[test]
+    fn channels_pull_failure_surfaces_channel_shadow_bug() {
+        let (mut app, _) = App::new();
+        app.channels.pending_pull_after_write = true;
+        app.channels.backup_path = Some(PathBuf::from("/tmp/channels.scm.bak"));
+        app.active_op = Some(finished_pull_op(Some(1), true));
+        let _ = app.update(Message::Progress(OpEvent::Finished));
+        let offer = app.channels.rollback_offer.as_ref().expect("rollback");
+        assert_eq!(offer.bug, Some(KnownBug::ChannelShadow74396));
+    }
+
+    /// Pull completions NOT originating from a channels-tab edit must
+    /// not raise the rollback offer, even on failure.
+    #[test]
+    fn non_channels_pull_failure_does_not_stage_rollback() {
+        let (mut app, _) = App::new();
+        app.channels.pending_pull_after_write = false;
+        app.active_op = Some(finished_pull_op(Some(1), true));
+        let _ = app.update(Message::Progress(OpEvent::Finished));
+        assert!(app.channels.rollback_offer.is_none());
+    }
+
+    /// Clicking "Add channel & install" stashes both the channel
+    /// pending-add AND the package-name pairing. Plain "Add" clears
+    /// the pairing.
+    #[test]
+    fn discover_add_and_install_records_package_name() {
+        let (mut app, _) = App::new();
+        let ch = Channel {
+            name: "nonguix".into(),
+            url: "https://gitlab.com/nonguix/nonguix".into(),
+            branch: None,
+            commit: None,
+            introduction_commit: Some("abc".into()),
+            introduction_fingerprint: Some("DEAD BEEF".into()),
+        };
+        let _ = app.update(Message::DiscoverAddAndInstallClicked(
+            Carrier::new(ch.clone()),
+            "steam".into(),
+        ));
+        assert_eq!(
+            app.channels.discover_pending_add.as_ref().map(|c| &c.name),
+            Some(&"nonguix".to_string())
+        );
+        assert_eq!(
+            app.channels.discover_pending_install.as_deref(),
+            Some("steam")
+        );
+
+        // Plain Add (e.g. from the channel-row CTA) clears the pairing.
+        let _ = app.update(Message::DiscoverAddClicked(Carrier::new(ch)));
+        assert!(app.channels.discover_pending_install.is_none());
+    }
+
+    /// "Pull, then install <pkg>" toast click flips both flags and
+    /// fires the existing user-pull message.
+    #[test]
+    fn toast_pull_and_install_sets_state() {
+        let (mut app, _) = App::new();
+        // Without `guix`, FetchUserCatalogClicked is a no-op for the
+        // op start, but the channels state mutation still runs.
+        let _ = app.update(Message::ChannelsToastPullAndInstallClicked("emacs".into()));
+        assert!(app.channels.pending_pull_after_write);
+        assert_eq!(app.channels.pending_install.as_deref(), Some("emacs"));
+    }
+
+    /// "Pull only" toast click sets the after-write flag but leaves
+    /// `pending_install` empty.
+    #[test]
+    fn toast_pull_only_does_not_set_install() {
+        let (mut app, _) = App::new();
+        app.channels.pending_install = Some("stale".into());
+        let _ = app.update(Message::ChannelsToastPullClicked);
+        assert!(app.channels.pending_pull_after_write);
+        assert!(app.channels.pending_install.is_none());
+    }
+
+    // --- Phase 3b — Remove warning dialog branch -----------------------
+
+    fn one_pkg(name: &str) -> InstalledPackage {
+        InstalledPackage {
+            name: name.into(),
+            version: "1.0".into(),
+            output: "out".into(),
+            store_path: PathBuf::from("/gnu/store/x"),
+        }
+    }
+
+    /// Cache `None` (loading or never fetched) → no warning dialog.
+    /// The minimal Confirm/Cancel renders and Remove proceeds normally.
+    #[test]
+    fn remove_warning_skipped_when_cache_not_loaded() {
+        assert!(!should_render_remove_warning(
+            Some("pantherx"),
+            None,
+            "pantherx",
+        ));
+    }
+
+    /// Pending matches and the channel has affected packages → warning
+    /// dialog renders.
+    #[test]
+    fn remove_warning_renders_when_pending_and_has_affected() {
+        let mut map: HashMap<String, Vec<InstalledPackage>> = HashMap::new();
+        map.insert("pantherx".into(), vec![one_pkg("panther-foo")]);
+        assert!(should_render_remove_warning(
+            Some("pantherx"),
+            Some(&map),
+            "pantherx",
+        ));
+    }
+
+    /// Cache loaded but the channel has zero entries → no warning
+    /// dialog. The minimal Confirm/Cancel handles the Remove.
+    #[test]
+    fn remove_warning_skipped_when_no_affected_packages() {
+        let map: HashMap<String, Vec<InstalledPackage>> = HashMap::new();
+        assert!(!should_render_remove_warning(
+            Some("pantherx"),
+            Some(&map),
+            "pantherx",
+        ));
+    }
+
+    /// A different channel is armed for removal → this row doesn't
+    /// render the warning, even if the queried channel has affected
+    /// packages.
+    #[test]
+    fn remove_warning_skipped_when_other_channel_pending() {
+        let mut map: HashMap<String, Vec<InstalledPackage>> = HashMap::new();
+        map.insert("pantherx".into(), vec![one_pkg("panther-foo")]);
+        assert!(!should_render_remove_warning(
+            Some("nonguix"),
+            Some(&map),
+            "pantherx",
+        ));
+    }
+
+    /// No row is armed → no dialog, regardless of cache contents.
+    #[test]
+    fn remove_warning_skipped_when_nothing_pending() {
+        let mut map: HashMap<String, Vec<InstalledPackage>> = HashMap::new();
+        map.insert("pantherx".into(), vec![one_pkg("panther-foo")]);
+        assert!(!should_render_remove_warning(None, Some(&map), "pantherx"));
+    }
+
+    /// Clicking Remove for a channel arms `pending_remove` AND kicks
+    /// off the introspection fetch when the cache is empty. The fetch
+    /// is best-effort — Remove still works even if it never completes.
+    #[test]
+    fn remove_clicked_arms_pending_and_triggers_introspection_fetch() {
+        let (mut app, _) = App::new();
+        assert!(app.channels.installed_by_channel.is_none());
+        assert!(!app.channels.installed_by_channel_loading);
+        let _ = app.update(Message::ChannelsRemoveClicked("pantherx".into()));
+        assert_eq!(app.channels.pending_remove.as_deref(), Some("pantherx"));
+        // Without `guix`, the spawn helper early-returns without
+        // flipping the loading flag — that's also fine for the dialog
+        // contract, which only requires `installed_by_channel` to
+        // remain `None` (the fallthrough → minimal Confirm/Cancel).
+        assert!(app.channels.installed_by_channel.is_none());
+    }
+
+    /// Profile-mutating op completion invalidates the cache so the
+    /// next Remove dialog re-fetches. Adding a channel doesn't.
+    #[test]
+    fn install_finished_invalidates_installed_by_channel_cache() {
+        let (mut app, _) = App::new();
+        let mut prefilled: HashMap<String, Vec<InstalledPackage>> = HashMap::new();
+        prefilled.insert("pantherx".into(), vec![one_pkg("panther-foo")]);
+        app.channels.installed_by_channel = Some(prefilled);
+        app.active_op = Some(ActiveOp {
+            id: OpId(1),
+            kind: OpKind::Install,
+            cancel: None,
+            op_slot: SharedOp::new_empty_for_tests(),
+            final_code: Some(0),
+            finished: false,
+            bootstrap_likely: false,
+            progress: ProgressSummary::new(OpKind::Install),
+            channel_shadow_seen: false,
+        });
+        let _ = app.update(Message::Progress(OpEvent::Finished));
+        assert!(app.channels.installed_by_channel.is_none());
+    }
+
+    /// Pull completion does NOT invalidate the cache — pull refreshes
+    /// the catalog but doesn't touch the user's installed profile.
+    #[test]
+    fn pull_finished_does_not_invalidate_installed_by_channel_cache() {
+        let (mut app, _) = App::new();
+        let mut prefilled: HashMap<String, Vec<InstalledPackage>> = HashMap::new();
+        prefilled.insert("pantherx".into(), vec![one_pkg("panther-foo")]);
+        app.channels.installed_by_channel = Some(prefilled);
+        app.active_op = Some(finished_pull_op(Some(0), false));
+        let _ = app.update(Message::Progress(OpEvent::Finished));
+        assert!(app.channels.installed_by_channel.is_some());
+    }
+
+    /// Introspection failure stores an empty map so the next dialog
+    /// open doesn't retry on every paint. The user-facing surface is
+    /// identical to a real empty result.
+    #[test]
+    fn installed_by_channel_failure_stores_empty_map() {
+        let (mut app, _) = App::new();
+        let _ = app.update(Message::ChannelsInstalledByChannelLoaded(Err(
+            "no guix found".into(),
+        )));
+        let m = app
+            .channels
+            .installed_by_channel
+            .as_ref()
+            .expect("Some after load");
+        assert!(m.is_empty());
+        assert!(!app.channels.installed_by_channel_loading);
+    }
+
+    /// Dismissing the rollback offer clears it without touching the
+    /// channels file state.
+    #[test]
+    fn rollback_dismissed_clears_offer() {
+        let (mut app, _) = App::new();
+        app.channels.rollback_offer = Some(RollbackOffer {
+            backup_path: Some(PathBuf::from("/tmp/x.bak")),
+            bug: None,
+        });
+        let _ = app.update(Message::ChannelsRollbackDismissed);
+        assert!(app.channels.rollback_offer.is_none());
     }
 }

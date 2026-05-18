@@ -56,6 +56,7 @@ mod describe;
 mod discover;
 mod error;
 mod gc;
+mod installed;
 mod operation;
 mod package;
 mod parsers;

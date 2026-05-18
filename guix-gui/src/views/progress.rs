@@ -333,6 +333,7 @@ mod tests {
             finished: false,
             bootstrap_likely: false,
             progress,
+            channel_shadow_seen: false,
         };
         (app, op)
     }

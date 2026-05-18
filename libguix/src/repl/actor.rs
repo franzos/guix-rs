@@ -278,20 +278,34 @@ impl Repl {
         Ok(())
     }
 
-    /// Lightweight warmup for channel/config ops — loads `(guix read-print)`,
-    /// `(guix channels)`, and the `channel_ops.scm` helper into the
-    /// persistent `libguix-rs` namespace. Does **not** run `fold-packages`
-    /// (that's the full search warmup, ~10-15 s cold). This one is sub-second.
+    /// Lightweight warmup for channel/config/installed-introspection
+    /// ops — loads `(guix read-print)`, `(guix channels)`, `(guix
+    /// profiles)`, `(guix packages)`, `(gnu packages)` (no
+    /// `fold-packages`), and both helper scripts into the persistent
+    /// `libguix-rs` namespace. Sub-second on a warm `.go` cache.
+    ///
+    /// `(gnu packages)` is the facade module; importing it doesn't
+    /// load the ~5000 package definitions (those live in submodules
+    /// loaded lazily on first reference). Channel/installed introspection
+    /// triggers only the submodules for the packages it actually
+    /// resolves — usually a small handful.
     pub async fn warmup_lightweight(&self) -> Result<(), GuixError> {
         // Pull in the modules + helper definitions into the persistent
         // module. We do this as a single persistent eval so the actor's
         // bootstrap form is also charged here on the cold path.
-        let helper = include_str!("channel_ops.scm");
+        let channel_helper = include_str!("channel_ops.scm");
+        let installed_helper = include_str!("installed_ops.scm");
         let form = format!(
             "(begin \
                (module-use! %libguix-rs-module (resolve-interface '(guix read-print))) \
                (module-use! %libguix-rs-module (resolve-interface '(guix channels))) \
-               {helper} \
+               (module-use! %libguix-rs-module (resolve-interface '(guix profiles))) \
+               (module-use! %libguix-rs-module (resolve-interface '(guix packages))) \
+               (module-use! %libguix-rs-module (resolve-interface '(guix utils))) \
+               (module-use! %libguix-rs-module (resolve-interface '(guix describe))) \
+               (module-use! %libguix-rs-module (resolve-interface '(gnu packages))) \
+               {channel_helper} \
+               {installed_helper} \
                #t)"
         );
         let _ = self.eval_persistent(&form).await?;
