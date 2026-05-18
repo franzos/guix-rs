@@ -100,4 +100,9 @@ Pre-1.0. The API will shift as the GUI consuming it (in the same repo) grows. Pi
 
 ## License
 
-GPL-3.0-only.
+Dual-licensed under either of:
+
+- MIT License ([LICENSE-MIT](LICENSE-MIT))
+- Apache License 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+
+at your option. Pick whichever fits your project — the library is permissively licensed so it can be embedded in tools under any licence, including the GPL-licensed `guix-gui` frontend in this same repository.

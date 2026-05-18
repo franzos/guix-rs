@@ -154,4 +154,7 @@ podman run --rm -v $PWD:/work -w /work rust:latest \
 
 ## License
 
-GPL-3.0-only.
+Licensed per crate:
+
+- **libguix** — MIT OR Apache-2.0 (permissive, so other tools can embed it freely). See `libguix/LICENSE-MIT` and `libguix/LICENSE-APACHE`.
+- **guix-gui** — GPL-3.0-only (end-user binary). See the root `LICENSE` file.
