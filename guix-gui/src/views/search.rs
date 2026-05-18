@@ -110,7 +110,7 @@ fn search_error_banner(err: &SearchError) -> Element<'_, Message> {
     .into()
 }
 
-fn result_list(results: &[PackageSummary], _selected: Option<usize>) -> Element<'_, Message> {
+fn result_list(results: &[PackageSummary], selected: Option<usize>) -> Element<'_, Message> {
     let mut col = Column::new().spacing(4);
     for (i, p) in results.iter().enumerate() {
         let row_content = column![
@@ -121,6 +121,7 @@ fn result_list(results: &[PackageSummary], _selected: Option<usize>) -> Element<
         let btn = button(row_content)
             .padding(6)
             .width(Length::Fill)
+            .style(styles::result_row_btn(selected == Some(i)))
             .on_press(Message::SearchResultSelected(i));
         col = col.push(btn);
     }

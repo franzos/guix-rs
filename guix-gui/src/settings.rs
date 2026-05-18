@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "lowercase")]
 pub enum Tab {
     #[default]
+    Home,
     Search,
     Installed,
     Updates,
@@ -20,6 +21,7 @@ pub enum Tab {
 impl Tab {
     pub fn label(self) -> &'static str {
         match self {
+            Tab::Home => "Home",
             Tab::Search => "Search",
             Tab::Installed => "Installed",
             Tab::Updates => "Updates",
@@ -30,8 +32,6 @@ impl Tab {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Settings {
-    #[serde(default)]
-    pub active_tab: Tab,
     #[serde(default)]
     pub source_config_path: Option<PathBuf>,
     #[serde(default)]
@@ -145,9 +145,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_are_search_and_none() {
+    fn defaults_are_none() {
         let s = Settings::default();
-        assert_eq!(s.active_tab, Tab::Search);
         assert!(s.source_config_path.is_none());
         assert!(s.custom_load_paths.is_empty());
         assert!(!s.show_log_by_default);
@@ -158,7 +157,6 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let path = tmp.path().join("config.json");
         let original = Settings {
-            active_tab: Tab::System,
             source_config_path: Some(PathBuf::from("/home/me/dotfiles/config.scm")),
             custom_load_paths: vec![PathBuf::from("/home/me/extra-modules")],
             show_log_by_default: true,
@@ -166,7 +164,6 @@ mod tests {
         };
         original.save_to(&path).expect("save");
         let loaded = Settings::load_from(&path);
-        assert_eq!(loaded.active_tab, Tab::System);
         assert_eq!(
             loaded.source_config_path.as_deref(),
             Some(Path::new("/home/me/dotfiles/config.scm"))
@@ -182,8 +179,7 @@ mod tests {
     fn missing_file_yields_defaults() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let path = tmp.path().join("absent.json");
-        let s = Settings::load_from(&path);
-        assert_eq!(s.active_tab, Tab::default());
+        let _s = Settings::load_from(&path);
     }
 
     #[test]
@@ -192,7 +188,7 @@ mod tests {
         let path = tmp.path().join("config.json");
         fs::write(&path, "{ this is not valid json").unwrap();
         let s = Settings::load_from(&path);
-        assert_eq!(s.active_tab, Tab::default());
+        assert!(s.source_config_path.is_none());
     }
 
     #[test]

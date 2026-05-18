@@ -226,6 +226,31 @@ pub fn btn_ghost(_theme: &iced::Theme, status: button::Status) -> button::Style 
     }
 }
 
+/// Search-results row. Selected rows render with the same subtle
+/// highlight as a hover state, so the click target the user just
+/// committed to is visually distinct from the rest of the list.
+pub fn result_row_btn(selected: bool) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
+    move |_theme, status| {
+        let highlighted =
+            selected || matches!(status, button::Status::Hovered | button::Status::Pressed);
+        let background = if highlighted {
+            Some(Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.06)))
+        } else {
+            None
+        };
+        let text_color = if highlighted { Color::WHITE } else { TEXT };
+        button::Style {
+            background,
+            text_color,
+            border: Border {
+                radius: 6.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+}
+
 /// Sidebar nav row. `active` flips the row to a filled, gold-accented state.
 pub fn nav_btn(active: bool) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
     move |_theme, status| {

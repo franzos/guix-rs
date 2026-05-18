@@ -14,10 +14,11 @@ use crate::app_metadata::{AppMetadata, MetadataClient};
 use crate::carrier::Carrier;
 use crate::operation_subscription::{operation_subscription, OpEvent, OpId, OpKind, SharedOp};
 use crate::progress_summary::ProgressSummary;
+use crate::recommended::RECOMMENDED;
 use crate::settings::{probe_first_run_config, Settings, Tab};
 use crate::styles::{self, BG, PRIMARY, TEXT};
 use crate::terminal_buffer::TerminalBuffer;
-use crate::views::{installed, search, system, updates};
+use crate::views::{home, installed, search, system, updates};
 
 pub const CANCEL_PKEXEC_TOOLTIP: &str =
     "Cannot cancel privileged operations — the kernel doesn't allow signaling root-owned processes. Wait for it to complete.";
@@ -77,6 +78,16 @@ pub struct App {
     /// cache when opened so the overlay survives cache eviction
     /// (e.g. toggling sources mid-view).
     pub lightbox: Option<Vec<u8>>,
+    /// Icon-only cache for the Home tab — separate from `metadata_cache`
+    /// so the heavyweight screenshot fetch isn't triggered just to
+    /// populate tile thumbnails.
+    pub home_icons: HashMap<String, IconCacheEntry>,
+}
+
+#[derive(Debug, Clone)]
+pub enum IconCacheEntry {
+    Loading,
+    Done(Option<Vec<u8>>),
 }
 
 pub struct ActiveOp {
@@ -100,6 +111,11 @@ pub struct SearchState {
     pub error: Option<SearchError>,
     pub truncated: bool,
     pub last_limit: usize,
+    /// When set, the next successful `SearchCompleted` will auto-select
+    /// the result whose `name` matches exactly. Consumed on completion
+    /// regardless of whether the match is found — a stray name from a
+    /// stale Home click shouldn't latch onto an unrelated future query.
+    pub pending_select: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -138,6 +154,9 @@ pub struct SystemState {
     pub source_input: String,
     pub validation_message: Option<String>,
     pub load_path_input: String,
+    /// Transient feedback for the "clear cache" action. Set when the
+    /// click is dispatched, replaced when the async result arrives.
+    pub cache_action_message: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -180,6 +199,13 @@ pub enum Message {
         name: String,
         metadata: Carrier<AppMetadata>,
     },
+    HomeAppClicked(String),
+    HomeIconLoaded {
+        name: String,
+        bytes: Carrier<Option<Vec<u8>>>,
+    },
+    ClearMetadataCacheClicked,
+    MetadataCacheCleared(Result<(), String>),
     AppMetadataEnabledToggled(bool),
     AppMetadataFlathubToggled(bool),
     AppMetadataDebianToggled(bool),
@@ -214,7 +240,10 @@ impl App {
                 let _ = settings.save();
             }
         }
-        let active_tab = settings.active_tab;
+        // Every launch lands on Home — the discover surface is the
+        // intended entry point, not whichever tab the user happened to
+        // close on. `Tab` is no longer persisted in `Settings`.
+        let active_tab = Tab::Home;
         let show_log = settings.show_log_by_default;
         let debug_events = std::env::var("GUIX_GUI_DEBUG_EVENTS").is_ok();
         let source_input = settings
@@ -254,6 +283,7 @@ impl App {
             metadata_client: MetadataClient::new(),
             metadata_cache: HashMap::new(),
             lightbox: None,
+            home_icons: HashMap::new(),
         };
         let boot = Task::perform(
             async {
@@ -325,6 +355,7 @@ impl App {
                     })
                     .unwrap_or_else(Task::none);
                 let tab_task = match self.active_tab {
+                    Tab::Home => self.spawn_home_icons_prefetch(),
                     Tab::Search => Task::none(),
                     Tab::Installed => Task::none(),
                     Tab::Updates => Task::batch([
@@ -357,9 +388,8 @@ impl App {
             }
             Message::TabSelected(t) => {
                 self.active_tab = t;
-                self.settings.active_tab = t;
-                let _ = self.settings.save();
                 match t {
+                    Tab::Home => self.spawn_home_icons_prefetch(),
                     Tab::Installed if self.installed.packages.is_empty() => {
                         self.spawn_installed_refresh()
                     }
@@ -427,8 +457,18 @@ impl App {
                             self.search.truncated = res.truncated;
                             self.search.last_limit = res.limit;
                             self.search.selected = None;
+                            self.search.error = None;
+                            if let Some(name) = self.search.pending_select.take() {
+                                if let Some(i) =
+                                    self.search.results.iter().position(|p| p.name == name)
+                                {
+                                    self.search.selected = Some(i);
+                                    return self.spawn_app_metadata_fetch(i);
+                                }
+                            }
+                        } else {
+                            self.search.error = None;
                         }
-                        self.search.error = None;
                     }
                     Err(e) => self.search.error = Some(build_search_error(e)),
                 }
@@ -571,15 +611,67 @@ impl App {
                 }
                 Task::none()
             }
+            Message::HomeAppClicked(name) => {
+                // Switch to Search, queue an exact-name auto-select for
+                // the next completion, and feed the query into the
+                // existing debounce flow. The user lands on the detail
+                // pane for the exact variant they clicked, while still
+                // seeing related results in the list.
+                self.active_tab = Tab::Search;
+                self.search.pending_select = Some(name.clone());
+                self.update(Message::SearchInputChanged(name))
+            }
+            Message::HomeIconLoaded { name, bytes } => {
+                let result = bytes.take().unwrap_or(None);
+                self.home_icons.insert(name, IconCacheEntry::Done(result));
+                Task::none()
+            }
+            Message::ClearMetadataCacheClicked => {
+                // Wipe both in-memory caches alongside the disk wipe so
+                // the UI immediately reflects the cleared state rather
+                // than continuing to show whatever was loaded this session.
+                self.home_icons.clear();
+                self.metadata_cache.clear();
+                self.system.cache_action_message = Some("Clearing cache...".into());
+                // Replacing the client also drops its in-memory Flathub
+                // index — otherwise the next fetch would skip the
+                // network and miss the chance to pick up a refreshed ID
+                // list. New() is cheap; just rebuilds the reqwest pool.
+                let new_client = MetadataClient::new();
+                let to_clear = self.metadata_client.clone();
+                self.metadata_client = new_client;
+                Task::perform(
+                    async move { to_clear.clear_disk_cache().await },
+                    Message::MetadataCacheCleared,
+                )
+            }
+            Message::MetadataCacheCleared(result) => {
+                self.system.cache_action_message = Some(match result {
+                    Ok(()) => "Cache cleared.".into(),
+                    Err(e) => format!("Failed to clear cache: {e}"),
+                });
+                // If we're on Home with metadata enabled, repopulate the
+                // tile icons so the cleared state isn't visible as
+                // missing thumbnails.
+                if self.active_tab == Tab::Home {
+                    self.spawn_home_icons_prefetch()
+                } else {
+                    Task::none()
+                }
+            }
             Message::AppMetadataEnabledToggled(v) => {
                 self.settings.app_metadata.enabled = v;
                 let _ = self.settings.save();
+                let mut tasks: Vec<Task<Message>> = Vec::new();
                 // Re-fetch for the currently-selected result so the
                 // panel populates immediately when the user enables it.
                 if let Some(i) = self.search.selected {
-                    return self.spawn_app_metadata_fetch(i);
+                    tasks.push(self.spawn_app_metadata_fetch(i));
                 }
-                Task::none()
+                if v && self.active_tab == Tab::Home {
+                    tasks.push(self.spawn_home_icons_prefetch());
+                }
+                Task::batch(tasks)
             }
             Message::AppMetadataFlathubToggled(v) => {
                 self.settings.app_metadata.use_flathub = v;
@@ -587,6 +679,10 @@ impl App {
                 // Drop cached results so the toggle takes effect on
                 // the next selection without a manual refresh.
                 self.metadata_cache.clear();
+                self.home_icons.clear();
+                if v && self.active_tab == Tab::Home {
+                    return self.spawn_home_icons_prefetch();
+                }
                 Task::none()
             }
             Message::AppMetadataDebianToggled(v) => {
@@ -833,6 +929,38 @@ impl App {
         )
     }
 
+    /// Fan out icon fetches for the curated Home list. No-op when app
+    /// metadata is disabled, Flathub is the icon source disabled, or
+    /// `guix` hasn't been discovered yet (icons don't need guix, but the
+    /// Home tab doesn't render before discovery completes either).
+    fn spawn_home_icons_prefetch(&mut self) -> Task<Message> {
+        if !self.settings.app_metadata.enabled || !self.settings.app_metadata.use_flathub {
+            return Task::none();
+        }
+        let mut tasks: Vec<Task<Message>> = Vec::new();
+        for ra in RECOMMENDED {
+            if self.home_icons.contains_key(ra.name) {
+                continue;
+            }
+            self.home_icons
+                .insert(ra.name.to_string(), IconCacheEntry::Loading);
+            let client = self.metadata_client.clone();
+            let name_for_fetch = ra.name.to_string();
+            let name_for_msg = ra.name.to_string();
+            tasks.push(Task::perform(
+                async move {
+                    let bytes = client.fetch_icon(&name_for_fetch).await;
+                    Carrier::new(bytes)
+                },
+                move |bytes| Message::HomeIconLoaded {
+                    name: name_for_msg.clone(),
+                    bytes,
+                },
+            ));
+        }
+        Task::batch(tasks)
+    }
+
     fn spawn_system_load(&self) -> Task<Message> {
         let Some(g) = self.guix.clone() else {
             return Task::none();
@@ -929,6 +1057,7 @@ impl App {
 
         let sidebar = self.view_sidebar();
         let body: Element<'_, Message> = match self.active_tab {
+            Tab::Home => home::view(self),
             Tab::Search => search::view(self),
             Tab::Installed => installed::view(self),
             Tab::Updates => updates::view(self),
@@ -1005,6 +1134,7 @@ impl App {
 
         // Primary nav — top-aligned.
         let primary = column![
+            nav_btn("\u{1F3E0}", Tab::Home),
             nav_btn("\u{1F50D}", Tab::Search),
             nav_btn("\u{1F4E6}", Tab::Installed),
             nav_btn("\u{2191}", Tab::Updates),

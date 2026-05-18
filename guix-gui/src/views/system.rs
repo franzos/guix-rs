@@ -204,6 +204,26 @@ pub fn view(app: &App) -> Element<'_, Message> {
             .into()
     };
 
+    let cache_path_hint: Element<'_, Message> = match app.metadata_client.cache_root() {
+        Some(p) => text(format!("Cache directory: {}", p.display()))
+            .size(11)
+            .color(MUTED)
+            .into(),
+        None => text("Cache directory: (no XDG cache dir found — using in-memory only)")
+            .size(11)
+            .color(MUTED)
+            .into(),
+    };
+    let clear_btn = button(text("Clear cache").size(13))
+        .padding([8, 16])
+        .style(styles::btn_secondary)
+        .on_press(Message::ClearMetadataCacheClicked);
+    let cache_feedback: Element<'_, Message> =
+        text(app.system.cache_action_message.clone().unwrap_or_default())
+            .size(12)
+            .color(MUTED)
+            .into();
+
     let metadata_inner = column![
         text("Icons & screenshots").size(16).font(BOLD),
         text(
@@ -232,6 +252,16 @@ pub fn view(app: &App) -> Element<'_, Message> {
             sub_enabled,
             Message::AppMetadataDebianToggled,
         ),
+        Space::new().height(8),
+        text("Cache").size(13).font(BOLD),
+        text("Icons and screenshots are saved on disk for up to a year. Clear it if an icon looks wrong upstream.")
+            .size(12)
+            .color(MUTED),
+        cache_path_hint,
+        Space::new().height(4),
+        row![clear_btn, cache_feedback]
+            .spacing(12)
+            .align_y(iced::Alignment::Center),
     ]
     .spacing(6);
 
