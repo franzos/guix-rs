@@ -15,6 +15,7 @@ pub enum Tab {
     Search,
     Installed,
     Updates,
+    Channels,
     System,
     About,
 }
@@ -26,6 +27,7 @@ impl Tab {
             Tab::Search => "Search",
             Tab::Installed => "Installed",
             Tab::Updates => "Updates",
+            Tab::Channels => "Channels",
             Tab::System => "Settings",
             Tab::About => "About",
         }
@@ -36,6 +38,11 @@ impl Tab {
 pub struct Settings {
     #[serde(default)]
     pub source_config_path: Option<PathBuf>,
+    /// Override for `~/.config/guix/channels.scm`. Used when the default
+    /// path resolves into `/gnu/store/...` (e.g. `guix home`-managed
+    /// setups) so the user can keep their channels in a writable source.
+    #[serde(default)]
+    pub channels_source_path: Option<PathBuf>,
     #[serde(default)]
     pub custom_load_paths: Vec<PathBuf>,
     #[serde(default)]
@@ -160,6 +167,7 @@ mod tests {
         let path = tmp.path().join("config.json");
         let original = Settings {
             source_config_path: Some(PathBuf::from("/home/me/dotfiles/config.scm")),
+            channels_source_path: Some(PathBuf::from("/home/me/dotfiles/channels.scm")),
             custom_load_paths: vec![PathBuf::from("/home/me/extra-modules")],
             show_log_by_default: true,
             app_metadata: AppMetadataSettings::default(),
@@ -169,6 +177,10 @@ mod tests {
         assert_eq!(
             loaded.source_config_path.as_deref(),
             Some(Path::new("/home/me/dotfiles/config.scm"))
+        );
+        assert_eq!(
+            loaded.channels_source_path.as_deref(),
+            Some(Path::new("/home/me/dotfiles/channels.scm"))
         );
         assert_eq!(
             loaded.custom_load_paths,

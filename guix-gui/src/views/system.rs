@@ -1,9 +1,8 @@
-use iced::widget::{
-    button, checkbox, column, container, row, scrollable, text, text_input, Column, Space,
-};
+use iced::widget::{button, checkbox, column, container, row, scrollable, text, text_input, Space};
 use iced::{Element, Length};
 
 use crate::app::{App, Message};
+use crate::settings::Tab;
 use crate::styles::{self, BOLD, MUTED};
 
 pub fn view(app: &App) -> Element<'_, Message> {
@@ -153,28 +152,84 @@ pub fn view(app: &App) -> Element<'_, Message> {
     .spacing(8);
 
     // -- CHANNELS section --
-    let mut channels_inner: Column<'_, Message> = column![
+    // Summary card only — full per-channel editing lives in the Channels
+    // tab. The count must mirror the Channels tab (the file set), not
+    // `app.updates.channels` (the `guix describe` set) — those diverge
+    // whenever a user's channels declare transitive deps.
+    let summary = match app.channels.file.as_ref() {
+        Some(f) => {
+            let count = f.list.channels().len();
+            if count == 0 {
+                "No channels configured.".to_string()
+            } else {
+                format!(
+                    "{count} channel{} configured.",
+                    if count == 1 { "" } else { "s" }
+                )
+            }
+        }
+        None => "Channels configured: —".to_string(),
+    };
+    let open_channels = button(text("Open Channels tab").size(13))
+        .padding([8, 16])
+        .style(styles::btn_secondary)
+        .on_press(Message::TabSelected(Tab::Channels));
+    let channels_inner = column![
         text("Channels").size(16).font(BOLD),
-        text("Discovered Guix channels (read-only).")
+        text("Manage user-level channels in the dedicated tab.")
             .size(12)
             .color(MUTED),
         Space::new().height(4),
+        text(summary).size(12).color(MUTED),
+        Space::new().height(4),
+        open_channels,
     ]
     .spacing(4);
-    if app.updates.channels.is_empty() {
-        channels_inner = channels_inner.push(text("No channels discovered.").size(12).color(MUTED));
-    } else {
-        for c in &app.updates.channels {
-            let commit = c.commit.as_deref().unwrap_or("(no commit)");
-            channels_inner = channels_inner.push(
-                column![
-                    text(c.name.clone()).size(13).font(BOLD),
-                    text(format!("{commit}  {}", c.url)).size(11).color(MUTED),
-                ]
-                .spacing(2),
-            );
-        }
-    }
+
+    // User channels source path override — lives in the CHANNELS section
+    // (the "User" prefix is forward-compatible with the system-level
+    // equivalent coming in Phase 4). Empty value clears the override and
+    // falls back to `~/.config/guix/channels.scm`.
+    let has_override = app.settings.channels_source_path.is_some();
+    let use_default_btn = {
+        let on_press = if has_override {
+            Some(Message::ChannelsSourcePathUseDefault)
+        } else {
+            None
+        };
+        button(text("Use default").size(12))
+            .padding([6, 12])
+            .style(styles::btn_ghost)
+            .on_press_maybe(on_press)
+    };
+    let channels_source_inner = column![
+        text("User channels source path").size(16).font(BOLD),
+        text(
+            "Override for ~/.config/guix/channels.scm. Required when the \
+             default path is managed by `guix home` (resolves into /gnu/store)."
+        )
+        .size(12)
+        .color(MUTED),
+        Space::new().height(4),
+        row![
+            text_input(
+                "/home/you/dotfiles/channels.scm (leave empty for default)",
+                &app.system.channels_source_input,
+            )
+            .on_input(Message::ChannelsSourcePathChanged)
+            .padding(8)
+            .size(13)
+            .width(Length::Fill),
+            use_default_btn,
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center),
+    ]
+    .spacing(4);
+    let channels_source_card = container(channels_source_inner)
+        .padding(20)
+        .width(Length::Fill)
+        .style(styles::card);
 
     let channels_section = column![
         text("CHANNELS").size(12).color(MUTED),
@@ -182,6 +237,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
             .padding(20)
             .width(Length::Fill)
             .style(styles::card),
+        channels_source_card,
     ]
     .spacing(8);
 

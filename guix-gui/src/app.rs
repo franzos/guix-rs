@@ -5,9 +5,9 @@ use iced::theme::Palette;
 use iced::widget::{button, column, container, row, scrollable, svg, text, tooltip, Column, Space};
 use iced::{Alignment, Element, Font, Length, Subscription, Task, Theme};
 use libguix::{
-    CancelHandle, Channel, Guix, GuixError, InstalledPackage, Operation, PackageSummary,
-    ProgressEvent, ProgressStream, PullOps, ReconfigureOptions, SearchFastResult,
-    SystemPullOptions, DEFAULT_SEARCH_LIMIT,
+    CancelHandle, Channel, ChannelOp, ChannelsError, ChannelsFile, Guix, GuixError,
+    InstalledPackage, Operation, PackageSummary, ProgressEvent, ProgressStream, PullOps,
+    ReconfigureOptions, SearchFastResult, SystemPullOptions, DEFAULT_SEARCH_LIMIT,
 };
 
 use crate::app_metadata::{AppMetadata, MetadataClient};
@@ -18,7 +18,7 @@ use crate::recommended::RECOMMENDED;
 use crate::settings::{probe_first_run_config, Settings, Tab};
 use crate::styles::{self, BG, PRIMARY, TEXT};
 use crate::terminal_buffer::TerminalBuffer;
-use crate::views::{about, home, installed, search, system, updates};
+use crate::views::{about, channels as channels_view, home, installed, search, system, updates};
 
 pub const CANCEL_PKEXEC_TOOLTIP: &str =
     "Cannot cancel privileged operations — the kernel doesn't allow signaling root-owned processes. Wait for it to complete.";
@@ -64,6 +64,7 @@ pub struct App {
     pub installed: InstalledState,
     pub updates: UpdatesState,
     pub system: SystemState,
+    pub channels: ChannelsState,
     /// Gates `repl.interrupt()` — SIGINT during initial module
     /// expansion can half-load modules. See NOTES.md "SIGINT cancellation".
     pub warmup_done: bool,
@@ -147,6 +148,100 @@ pub struct PullMtimes {
     pub system_profile: Option<std::time::SystemTime>,
 }
 
+/// Bundles the parsed `ChannelsFile` with the cached `.bak` presence so
+/// the view never has to `stat(2)` from inside `view()`. The bak probe
+/// runs in the same async task as the file read.
+#[derive(Debug, Clone)]
+pub struct ChannelsFileLoad {
+    pub file: ChannelsFile,
+    pub backup_path: Option<PathBuf>,
+}
+
+/// Channels tab state — file load, in-flight write, inline add form,
+/// transient toasts, and the pending-remove confirmation latch.
+#[derive(Default)]
+pub struct ChannelsState {
+    pub file: Option<ChannelsFile>,
+    pub loading: bool,
+    pub saving: bool,
+    /// Display string for the most recent error (file read, validation,
+    /// or apply/write). We render the string rather than the structured
+    /// variant so the view stays simple — the `ChannelsError::Display`
+    /// impl already carries line/column when available.
+    pub error: Option<String>,
+    pub add_form: AddChannelForm,
+    /// Transient post-write feedback ("Channel added — Pull now?").
+    pub last_message: Option<String>,
+    /// Inline submit-time validation feedback for the Add form
+    /// (mostly: missing-required-field, duplicate-name).
+    pub validation_message: Option<String>,
+    /// When set, the row for this channel renders a Confirm/Cancel pair
+    /// instead of a plain Remove button. Cleared on cancel or after the
+    /// write completes.
+    pub pending_remove: Option<String>,
+    /// Cached path to the most recent `.bak` written by `write_atomic`,
+    /// when one exists on disk. Set during the same async load that
+    /// produces `file` so the view never has to `stat(2)`. `None` when no
+    /// backup is present or the file itself hasn't been loaded yet.
+    pub backup_path: Option<PathBuf>,
+    /// When set, the header strip renders a Confirm/Cancel pair instead
+    /// of the "Restore last backup" button. Cleared on cancel or after
+    /// the restore completes.
+    pub pending_restore: bool,
+}
+
+/// Inputs backing the inline Add Channel form. Persisted only in memory —
+/// abandoned drafts reset on app restart, which is the right thing.
+#[derive(Default)]
+pub struct AddChannelForm {
+    pub name: String,
+    pub url: String,
+    pub branch: String,
+    pub commit: String,
+    pub intro_commit: String,
+    pub intro_fpr: String,
+}
+
+impl AddChannelForm {
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Builds a `Channel` from the trimmed fields. Returns `Err` with a
+    /// user-facing message if any required field is empty.
+    pub fn to_channel(&self) -> Result<Channel, String> {
+        let name = self.name.trim();
+        let url = self.url.trim();
+        let intro_commit = self.intro_commit.trim();
+        let intro_fpr = self.intro_fpr.trim();
+        if name.is_empty() {
+            return Err("Name is required.".into());
+        }
+        if url.is_empty() {
+            return Err("URL is required.".into());
+        }
+        if intro_commit.is_empty() || intro_fpr.is_empty() {
+            return Err("Introduction commit and fingerprint are required.".into());
+        }
+        let opt = |s: &String| {
+            let t = s.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_owned())
+            }
+        };
+        Ok(Channel {
+            name: name.to_owned(),
+            url: url.to_owned(),
+            branch: opt(&self.branch),
+            commit: opt(&self.commit),
+            introduction_commit: Some(intro_commit.to_owned()),
+            introduction_fingerprint: Some(intro_fpr.to_owned()),
+        })
+    }
+}
+
 #[derive(Default)]
 pub struct SystemState {
     pub current_config_display: Option<String>,
@@ -157,6 +252,9 @@ pub struct SystemState {
     /// Transient feedback for the "clear cache" action. Set when the
     /// click is dispatched, replaced when the async result arrives.
     pub cache_action_message: Option<String>,
+    /// Buffered input for the channels source-path override; mirrors
+    /// `source_input` for the `config.scm` override.
+    pub channels_source_input: String,
 }
 
 #[derive(Debug, Clone)]
@@ -189,9 +287,30 @@ pub enum Message {
     SystemConfigChecked(Result<String, String>),
     SourceConfigChanged(String),
     SourceConfigValidate,
+    ChannelsSourcePathChanged(String),
+    ChannelsSourcePathUseDefault,
     LoadPathInputChanged(String),
     LoadPathAdd,
     LoadPathRemove(usize),
+
+    ChannelsRefresh,
+    ChannelsFileLoaded(Result<ChannelsFileLoad, String>),
+    ChannelsRestoreClicked,
+    ChannelsRestoreCancelled,
+    ChannelsRestoreConfirmed,
+    ChannelsRestoreCompleted(Result<ChannelsFileLoad, String>),
+    ChannelsRemoveClicked(String),
+    ChannelsRemoveCancelled,
+    ChannelsRemoveConfirmed(String),
+    ChannelsAddSubmitted,
+    ChannelsAddNameChanged(String),
+    ChannelsAddUrlChanged(String),
+    ChannelsAddBranchChanged(String),
+    ChannelsAddCommitChanged(String),
+    ChannelsAddIntroCommitChanged(String),
+    ChannelsAddIntroFprChanged(String),
+    ChannelsApplyCompleted(Result<ChannelsFileLoad, String>),
+    ChannelsToastDismissed,
 
     InstallRequested(String),
 
@@ -251,6 +370,11 @@ impl App {
             .as_ref()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default();
+        let channels_source_input = settings
+            .channels_source_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
         let theme = Theme::custom(
             "GuixGold".to_string(),
             Palette {
@@ -276,8 +400,10 @@ impl App {
             updates: UpdatesState::default(),
             system: SystemState {
                 source_input,
+                channels_source_input,
                 ..Default::default()
             },
+            channels: ChannelsState::default(),
             warmup_done: false,
             theme,
             metadata_client: MetadataClient::new(),
@@ -359,6 +485,7 @@ impl App {
                     Tab::Search => Task::none(),
                     Tab::Installed => Task::none(),
                     Tab::Updates => self.spawn_pull_mtimes_refresh(),
+                    Tab::Channels => self.spawn_channels_file_load(),
                     Tab::System => self.spawn_system_load(),
                     Tab::About => Task::none(),
                 };
@@ -399,6 +526,9 @@ impl App {
                         self.spawn_channels_refresh(),
                         self.spawn_pull_mtimes_refresh(),
                     ]),
+                    Tab::Channels if self.channels.file.is_none() && !self.channels.loading => {
+                        self.spawn_channels_file_load()
+                    }
                     Tab::System if self.system.current_config_display.is_none() => {
                         self.spawn_system_load()
                     }
@@ -596,6 +726,150 @@ impl App {
                     self.settings.custom_load_paths.remove(i);
                     let _ = self.settings.save();
                 }
+                Task::none()
+            }
+            Message::ChannelsSourcePathChanged(s) => {
+                self.system.channels_source_input = s.clone();
+                self.settings.channels_source_path = if s.trim().is_empty() {
+                    None
+                } else {
+                    Some(PathBuf::from(s))
+                };
+                let _ = self.settings.save();
+                // Force a reload on the next Channels tab visit / explicit
+                // refresh — the override changed under it.
+                self.channels.file = None;
+                self.channels.backup_path = None;
+                self.channels.error = None;
+                Task::none()
+            }
+            Message::ChannelsSourcePathUseDefault => {
+                self.system.channels_source_input.clear();
+                self.settings.channels_source_path = None;
+                let _ = self.settings.save();
+                self.channels.file = None;
+                self.channels.backup_path = None;
+                self.channels.error = None;
+                Task::none()
+            }
+
+            Message::ChannelsRefresh => self.spawn_channels_file_load(),
+            Message::ChannelsFileLoaded(Ok(load)) => {
+                self.channels.loading = false;
+                self.channels.file = Some(load.file);
+                self.channels.backup_path = load.backup_path;
+                self.channels.error = None;
+                Task::none()
+            }
+            Message::ChannelsFileLoaded(Err(e)) => {
+                self.channels.loading = false;
+                // Missing-file errors aren't surfaced as an error — the
+                // empty state renders instead so the user can create the
+                // file by adding their first channel.
+                if e.contains("No such file") || e.contains("not found") || e.contains("NotFound") {
+                    self.channels.file = None;
+                    self.channels.backup_path = None;
+                    self.channels.error = None;
+                } else {
+                    self.channels.file = None;
+                    self.channels.backup_path = None;
+                    self.channels.error = Some(e);
+                }
+                Task::none()
+            }
+            Message::ChannelsRemoveClicked(name) => {
+                self.channels.pending_remove = Some(name);
+                self.channels.last_message = None;
+                Task::none()
+            }
+            Message::ChannelsRemoveCancelled => {
+                self.channels.pending_remove = None;
+                Task::none()
+            }
+            Message::ChannelsRemoveConfirmed(name) => {
+                self.channels.pending_remove = None;
+                self.spawn_channels_apply(ChannelOp::RemoveChannelByName(name))
+            }
+            Message::ChannelsRestoreClicked => {
+                self.channels.pending_restore = true;
+                self.channels.last_message = None;
+                Task::none()
+            }
+            Message::ChannelsRestoreCancelled => {
+                self.channels.pending_restore = false;
+                Task::none()
+            }
+            Message::ChannelsRestoreConfirmed => {
+                self.channels.pending_restore = false;
+                self.spawn_channels_restore()
+            }
+            Message::ChannelsRestoreCompleted(Ok(load)) => {
+                self.channels.saving = false;
+                self.channels.file = Some(load.file);
+                self.channels.backup_path = load.backup_path;
+                self.channels.error = None;
+                self.channels.last_message = Some("Restored from backup.".into());
+                Task::none()
+            }
+            Message::ChannelsRestoreCompleted(Err(e)) => {
+                self.channels.saving = false;
+                self.channels.error = Some(e);
+                Task::none()
+            }
+            Message::ChannelsAddSubmitted => {
+                let channel_result = self.channels.add_form.to_channel();
+                match channel_result {
+                    Ok(ch) => {
+                        self.channels.validation_message = None;
+                        self.spawn_channels_apply(ChannelOp::AddChannel(ch))
+                    }
+                    Err(msg) => {
+                        self.channels.validation_message = Some(msg);
+                        Task::none()
+                    }
+                }
+            }
+            Message::ChannelsAddNameChanged(s) => {
+                self.channels.add_form.name = s;
+                Task::none()
+            }
+            Message::ChannelsAddUrlChanged(s) => {
+                self.channels.add_form.url = s;
+                Task::none()
+            }
+            Message::ChannelsAddBranchChanged(s) => {
+                self.channels.add_form.branch = s;
+                Task::none()
+            }
+            Message::ChannelsAddCommitChanged(s) => {
+                self.channels.add_form.commit = s;
+                Task::none()
+            }
+            Message::ChannelsAddIntroCommitChanged(s) => {
+                self.channels.add_form.intro_commit = s;
+                Task::none()
+            }
+            Message::ChannelsAddIntroFprChanged(s) => {
+                self.channels.add_form.intro_fpr = s;
+                Task::none()
+            }
+            Message::ChannelsApplyCompleted(Ok(load)) => {
+                self.channels.saving = false;
+                self.channels.file = Some(load.file);
+                self.channels.backup_path = load.backup_path;
+                self.channels.error = None;
+                self.channels.add_form.clear();
+                self.channels.last_message =
+                    Some("Channels updated. Pull now to fetch the new catalog.".into());
+                Task::none()
+            }
+            Message::ChannelsApplyCompleted(Err(e)) => {
+                self.channels.saving = false;
+                self.channels.error = Some(e);
+                Task::none()
+            }
+            Message::ChannelsToastDismissed => {
+                self.channels.last_message = None;
                 Task::none()
             }
 
@@ -963,6 +1237,103 @@ impl App {
         Task::batch(tasks)
     }
 
+    fn spawn_channels_file_load(&mut self) -> Task<Message> {
+        self.channels.loading = true;
+        self.channels.error = None;
+        let path_override = self.settings.channels_source_path.clone();
+        Task::perform(
+            async move { load_channels_file(path_override).await },
+            Message::ChannelsFileLoaded,
+        )
+    }
+
+    /// Pipeline: pre-flight via `ChannelsFile::apply` (which calls the
+    /// REPL helper), `validate` the resulting source, then `write_atomic`.
+    /// On success, re-read the file so the parsed view stays authoritative.
+    fn spawn_channels_apply(&mut self, op: ChannelOp) -> Task<Message> {
+        let Some(g) = self.guix.clone() else {
+            return Task::none();
+        };
+        let Some(file) = self.channels.file.clone() else {
+            self.channels.error = Some("No channels.scm loaded; refresh the tab first.".into());
+            return Task::none();
+        };
+        if !file.is_writable() {
+            self.channels.error = Some(format!(
+                "channels.scm at {} is store-managed. Set a writable source-path override in Settings.",
+                file.path.display()
+            ));
+            return Task::none();
+        }
+        self.channels.saving = true;
+        self.channels.error = None;
+        self.channels.last_message = None;
+        let path_override = self.settings.channels_source_path.clone();
+        Task::perform(
+            async move {
+                let repl = g.repl().await.map_err(|e| format!("{e}"))?;
+                let new_source = file
+                    .apply(&repl, op)
+                    .await
+                    .map_err(|e| describe_channels_error(&e))?;
+                ChannelsFile::validate(&repl, &new_source)
+                    .await
+                    .map_err(|e| describe_channels_error(&e))?;
+                file.write_atomic(&new_source)
+                    .await
+                    .map_err(|e| describe_channels_error(&e))?;
+                // Re-read so we get the canonical parsed view (the new
+                // source is what we just wrote, but rereading also picks
+                // up any normalisation the pretty-printer applied).
+                load_channels_file(path_override).await
+            },
+            Message::ChannelsApplyCompleted,
+        )
+    }
+
+    /// Copies the cached `.bak` over the active file, then re-reads. The
+    /// `.bak` is intentionally left in place — keeping the
+    /// previous-previous version means a second "Restore" press won't
+    /// silently no-op. See TODO.md "channels UX polish".
+    fn spawn_channels_restore(&mut self) -> Task<Message> {
+        let Some(file) = self.channels.file.clone() else {
+            self.channels.error = Some("No channels.scm loaded; refresh the tab first.".into());
+            return Task::none();
+        };
+        let Some(bak) = self.channels.backup_path.clone() else {
+            self.channels.error = Some("No backup file present.".into());
+            return Task::none();
+        };
+        if !file.is_writable() {
+            self.channels.error = Some(format!(
+                "channels.scm at {} is store-managed. Set a writable source-path override in Settings.",
+                file.path.display()
+            ));
+            return Task::none();
+        }
+        self.channels.saving = true;
+        self.channels.error = None;
+        self.channels.last_message = None;
+        let path = file.path.clone();
+        let path_override = self.settings.channels_source_path.clone();
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+                    let content = std::fs::read(&bak)?;
+                    let tmp = path.with_extension("scm.restore-tmp");
+                    std::fs::write(&tmp, &content)?;
+                    std::fs::rename(&tmp, &path)?;
+                    Ok(())
+                })
+                .await
+                .map_err(|e| format!("restore task panicked: {e}"))?
+                .map_err(|e| format!("restore failed: {e}"))?;
+                load_channels_file(path_override).await
+            },
+            Message::ChannelsRestoreCompleted,
+        )
+    }
+
     fn spawn_system_load(&self) -> Task<Message> {
         let Some(g) = self.guix.clone() else {
             return Task::none();
@@ -1063,6 +1434,7 @@ impl App {
             Tab::Search => search::view(self),
             Tab::Installed => installed::view(self),
             Tab::Updates => updates::view(self),
+            Tab::Channels => channels_view::view(self),
             Tab::System => system::view(self),
             Tab::About => about::view(self),
         };
@@ -1141,6 +1513,7 @@ impl App {
             nav_btn("\u{1F50D}", Tab::Search),
             nav_btn("\u{1F4E6}", Tab::Installed),
             nav_btn("\u{2191}", Tab::Updates),
+            nav_btn("\u{1F4E1}", Tab::Channels),
         ]
         .spacing(2);
 
@@ -1293,6 +1666,39 @@ pub(crate) fn op_supports_cancel(kind: OpKind) -> bool {
     !matches!(kind, OpKind::SystemPull | OpKind::Reconfigure)
 }
 
+/// Maps a `ChannelsError` to a human-readable string for the GUI. We
+/// flatten to `String` early so the message types stay simple and the
+/// `Display` impl on `ChannelsError` (which already carries line/column
+/// when available, per the Phase 1 limitation) is the single source of
+/// truth for what the user sees.
+fn describe_channels_error(e: &ChannelsError) -> String {
+    e.to_string()
+}
+
+/// Computes the `.bak` sibling that `ChannelsFile::write_atomic`
+/// produces. **Must stay in lockstep with `libguix::channels::write_atomic`**:
+/// that function always calls `path.with_extension("scm.bak")` —
+/// regardless of the source extension — so `/tmp/foo` and `/tmp/foo.txt`
+/// both yield `/tmp/foo.scm.bak`. We mirror that exactly here so the
+/// "Restore last backup" button reliably finds the file.
+fn backup_path_for(path: &Path) -> PathBuf {
+    path.with_extension("scm.bak")
+}
+
+/// Reads the channels file and probes the `.bak` sibling in the same
+/// async task so the view never `stat`s from `view()`.
+async fn load_channels_file(path_override: Option<PathBuf>) -> Result<ChannelsFileLoad, String> {
+    let file = ChannelsFile::read(path_override.as_deref())
+        .await
+        .map_err(|e| describe_channels_error(&e))?;
+    let bak = backup_path_for(&file.path);
+    let backup_path = match tokio::fs::metadata(&bak).await {
+        Ok(_) => Some(bak),
+        Err(_) => None,
+    };
+    Ok(ChannelsFileLoad { file, backup_path })
+}
+
 const SEARCH_ERROR_SUMMARY_CAP: usize = 200;
 
 pub(crate) fn build_search_error(details: String) -> SearchError {
@@ -1318,6 +1724,32 @@ pub(crate) fn build_search_error(details: String) -> SearchError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Mirrors `libguix::write_atomic`'s `path.with_extension("scm.bak")`
+    /// — if this diverges, the Channels "Restore last backup" button
+    /// will silently never appear.
+    #[test]
+    fn backup_path_for_scm_uses_scm_bak() {
+        assert_eq!(
+            backup_path_for(Path::new("/home/me/.config/guix/channels.scm")),
+            PathBuf::from("/home/me/.config/guix/channels.scm.bak")
+        );
+    }
+
+    /// `libguix::write_atomic` always overwrites the extension to
+    /// `scm.bak`, even when the source has a different (or no) extension.
+    /// We mirror that — this test pins the contract.
+    #[test]
+    fn backup_path_for_always_scm_bak() {
+        assert_eq!(
+            backup_path_for(Path::new("/tmp/channels.notscm")),
+            PathBuf::from("/tmp/channels.scm.bak")
+        );
+        assert_eq!(
+            backup_path_for(Path::new("/tmp/channels")),
+            PathBuf::from("/tmp/channels.scm.bak")
+        );
+    }
 
     #[test]
     fn user_ops_support_cancel() {

@@ -291,7 +291,7 @@ mod tests {
         let cl = parse_channels_list(s).unwrap();
         match cl {
             ChannelsList::Explicit(v) => assert_eq!(v.len(), 3),
-            other => panic!("expected Explicit, got {other:?}"),
+            other @ ChannelsList::WithDefaults(_) => panic!("expected Explicit, got {other:?}"),
         }
     }
 
@@ -304,7 +304,7 @@ mod tests {
                 assert_eq!(v.len(), 1);
                 assert_eq!(v[0].name, "pantherx");
             }
-            other => panic!("expected WithDefaults, got {other:?}"),
+            other @ ChannelsList::Explicit(_) => panic!("expected WithDefaults, got {other:?}"),
         }
     }
 
@@ -317,7 +317,7 @@ mod tests {
                 assert_eq!(v.len(), 1);
                 assert_eq!(v[0].name, "pantherx");
             }
-            other => panic!("expected WithDefaults, got {other:?}"),
+            other @ ChannelsList::Explicit(_) => panic!("expected WithDefaults, got {other:?}"),
         }
     }
 
@@ -346,7 +346,7 @@ mod tests {
         let cl = parse_channels_list(s).unwrap();
         match cl {
             ChannelsList::Explicit(v) => assert_eq!(v.len(), 2),
-            other => panic!("expected Explicit, got {other:?}"),
+            other @ ChannelsList::WithDefaults(_) => panic!("expected Explicit, got {other:?}"),
         }
     }
 

@@ -218,8 +218,7 @@ async fn validate_synthetic_broken_returns_parse_error() {
     let bad = "(list (channel (name 'foo) (url \"https://x\")\n";
     let err = ChannelsFile::validate(&repl, bad)
         .await
-        .err()
-        .expect("expected parse error");
+        .expect_err("expected parse error");
     match err {
         ChannelsError::ParseError { .. } => {}
         other => panic!("expected ParseError, got {other:?}"),
@@ -330,8 +329,7 @@ async fn add_channel_duplicate_name_rejected_in_preflight() {
     let err = cf
         .apply(&repl, ChannelOp::AddChannel(dup))
         .await
-        .err()
-        .expect("expected duplicate-name");
+        .expect_err("expected duplicate-name");
     assert!(
         matches!(err, ChannelsError::DuplicateName { ref name } if name == "guix"),
         "wrong error: {err:?}"
@@ -440,8 +438,7 @@ async fn remove_channel_returns_not_found_for_unknown_name() {
             ChannelOp::RemoveChannelByName("does-not-exist".into()),
         )
         .await
-        .err()
-        .expect("expected NotFound");
+        .expect_err("expected NotFound");
     assert!(
         matches!(err, ChannelsError::NotFound { ref name } if name == "does-not-exist"),
         "wrong error: {err:?}"
@@ -459,8 +456,7 @@ async fn remove_guix_channel_from_explicit_is_rejected() {
     let err = cf
         .apply(&repl, ChannelOp::RemoveChannelByName("guix".into()))
         .await
-        .err()
-        .expect("expected refusal");
+        .expect_err("expected refusal");
     assert!(
         matches!(err, ChannelsError::UnsupportedOp { .. }),
         "wrong error: {err:?}"
@@ -524,8 +520,7 @@ async fn remove_wrapped_channel_drops_the_wrapper() {
     let err = cf
         .apply(&repl, ChannelOp::RemoveChannelByName("guix".into()))
         .await
-        .err()
-        .expect("removing guix is refused at pre-flight");
+        .expect_err("removing guix is refused at pre-flight");
     assert!(
         matches!(err, ChannelsError::UnsupportedOp { .. }),
         "wrong error: {err:?}"
@@ -654,8 +649,7 @@ async fn write_atomic_refuses_store_managed() {
     let err = cf
         .write_atomic("(list)\n")
         .await
-        .err()
-        .expect("expected StoreManaged");
+        .expect_err("expected StoreManaged");
     assert!(
         matches!(err, ChannelsError::StoreManaged { .. }),
         "wrong error: {err:?}"
@@ -682,8 +676,7 @@ async fn add_channel_without_introduction_rejected_in_preflight() {
     let err = cf
         .apply(&repl, ChannelOp::AddChannel(no_intro))
         .await
-        .err()
-        .expect("expected missing-introduction");
+        .expect_err("expected missing-introduction");
     assert!(
         matches!(err, ChannelsError::MissingIntroduction { .. }),
         "wrong error: {err:?}"

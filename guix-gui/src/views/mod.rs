@@ -1,4 +1,5 @@
 pub mod about;
+pub mod channels;
 pub mod home;
 pub mod installed;
 pub mod progress;
