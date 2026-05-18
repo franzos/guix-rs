@@ -123,6 +123,15 @@ impl ChannelsFile {
         !self.is_store_managed
     }
 
+    /// The `.bak` sibling that `write_atomic` produces on each edit.
+    /// Always `self.path.with_extension("scm.bak")` regardless of the
+    /// source extension — so `/tmp/foo` and `/tmp/foo.txt` both yield
+    /// `/tmp/foo.scm.bak`. Use this when probing whether a previous
+    /// edit exists (e.g. to enable a "Restore last backup" affordance).
+    pub fn backup_path(&self) -> PathBuf {
+        self.path.with_extension("scm.bak")
+    }
+
     /// Sandboxed validation of an arbitrary source string via the REPL
     /// actor. Parses with `read-with-comments` to surface line/column
     /// when available. **Doesn't execute** the channels form — we only
@@ -208,10 +217,10 @@ impl ChannelsFile {
         }
 
         let path = self.path.clone();
+        let bak_path = self.backup_path();
         let content = content.to_owned();
         tokio::task::spawn_blocking(move || -> std::io::Result<()> {
             let tmp_path = path.with_extension("scm.tmp");
-            let bak_path = path.with_extension("scm.bak");
 
             // Best-effort backup. Missing source isn't an error — we
             // might be creating channels.scm for the first time.
@@ -506,5 +515,31 @@ mod tests {
         let p = dir.path().join("channels.scm");
         std::fs::write(&p, "(list)").expect("write");
         assert!(!resolves_into_store(&p));
+    }
+
+    /// Pins the `.bak` naming contract — must always yield `scm.bak`
+    /// regardless of the source extension, because `write_atomic` uses
+    /// the same `with_extension("scm.bak")` call. Mirror this in any
+    /// caller that probes for the backup file.
+    #[test]
+    fn backup_path_is_always_scm_bak() {
+        let mk = |path: &str| ChannelsFile {
+            path: PathBuf::from(path),
+            list: crate::parsers::sexp::ChannelsList::Explicit(Vec::new()),
+            raw: String::new(),
+            is_store_managed: false,
+        };
+        assert_eq!(
+            mk("/tmp/channels.scm").backup_path(),
+            PathBuf::from("/tmp/channels.scm.bak"),
+        );
+        assert_eq!(
+            mk("/tmp/channels").backup_path(),
+            PathBuf::from("/tmp/channels.scm.bak"),
+        );
+        assert_eq!(
+            mk("/tmp/foo.txt").backup_path(),
+            PathBuf::from("/tmp/foo.scm.bak"),
+        );
     }
 }

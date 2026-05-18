@@ -1,0 +1,20 @@
+[
+  {
+    "subscriptionSnippet": "(channel\n  (name 'glue)\n  (url \"https://git.sr.ht/~puercopop/glue\")\n  (branch \"default\")\n  (introduction\n    (make-channel-introduction\n      \"ea330f23fbebdb623892c1345d9bf6a0c4861276\"\n      (openpgp-fingerprint\n        \"D5A3 4BC7 B37F 4017 D091  5CF5 EEF6 BD0D 5626 DB0F\"))))\n",
+    "servicesCount": 3,
+    "packagesCount": 35,
+    "url": "https://git.sr.ht/~puercopop/glue",
+    "commit": "0c11b6bb8f9579b52b4938de52a9fb602ae6eafe",
+    "branch": "default",
+    "name": "glue"
+  },
+  {
+    "subscriptionSnippet": "(channel\n  (name 'wigust)\n  (url \"https://notabug.org/wigust/guix-wigust\")\n  (branch \"master\"))\n",
+    "servicesCount": 0,
+    "packagesCount": 157,
+    "url": "https://notabug.org/wigust/guix-wigust",
+    "commit": "83e86a2891dd57f54fc3568d6a56581fabbb02d2",
+    "branch": "master",
+    "name": "wigust"
+  }
+]

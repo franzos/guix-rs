@@ -49,6 +49,11 @@ pub struct Settings {
     pub show_log_by_default: bool,
     #[serde(default)]
     pub app_metadata: AppMetadataSettings,
+    /// Opt-in for the channel/package discovery surface backed by
+    /// `toys.whereis.social`. When `false`, nothing about discovery renders
+    /// anywhere in the app — no sub-mode toggle, no buttons, no network.
+    #[serde(default)]
+    pub discovery_enabled: bool,
 }
 
 /// Opt-in fetch of icons + screenshots from third-party catalogs. Off by
@@ -171,6 +176,7 @@ mod tests {
             custom_load_paths: vec![PathBuf::from("/home/me/extra-modules")],
             show_log_by_default: true,
             app_metadata: AppMetadataSettings::default(),
+            discovery_enabled: true,
         };
         original.save_to(&path).expect("save");
         let loaded = Settings::load_from(&path);
@@ -187,6 +193,13 @@ mod tests {
             vec![PathBuf::from("/home/me/extra-modules")]
         );
         assert!(loaded.show_log_by_default);
+        assert!(loaded.discovery_enabled);
+    }
+
+    #[test]
+    fn discovery_defaults_to_off() {
+        let s = Settings::default();
+        assert!(!s.discovery_enabled);
     }
 
     #[test]

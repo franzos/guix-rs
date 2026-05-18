@@ -19,6 +19,7 @@ use crate::settings::{probe_first_run_config, Settings, Tab};
 use crate::styles::{self, BG, PRIMARY, TEXT};
 use crate::terminal_buffer::TerminalBuffer;
 use crate::views::{about, channels as channels_view, home, installed, search, system, updates};
+use guix_gui::discovery::{DiscoveredChannel, DiscoveredPackage, Discovery, DiscoveryError};
 
 pub const CANCEL_PKEXEC_TOOLTIP: &str =
     "Cannot cancel privileged operations — the kernel doesn't allow signaling root-owned processes. Wait for it to complete.";
@@ -188,6 +189,40 @@ pub struct ChannelsState {
     /// of the "Restore last backup" button. Cleared on cancel or after
     /// the restore completes.
     pub pending_restore: bool,
+    /// Active sub-mode within the Channels tab. Only rendered when
+    /// `Settings::discovery_enabled` is true — strictly opt-in, so the
+    /// default Installed view is identical to the pre-discovery layout.
+    /// Not persisted across restarts: defaults to Installed every time.
+    pub sub_mode: ChannelsSubMode,
+    /// Lazily-constructed discovery client. Stays `None` while the
+    /// discovery toggle is off (no HTTP client, no allocations). Built
+    /// on first transition into the Discover sub-mode.
+    pub discovery: Option<Discovery>,
+    /// Most recent successful `Discovery::channels()` response, filtered
+    /// to introduced channels only.
+    pub discover_channels: Vec<DiscoveredChannel>,
+    /// Loading flag for the channels listing.
+    pub discover_channels_loading: bool,
+    /// Search input + debounce seq for the package search box.
+    pub discover_query: String,
+    pub discover_query_seq: u64,
+    pub discover_packages: Vec<DiscoveredPackage>,
+    pub discover_packages_loading: bool,
+    /// Single muted error line for the Discover sub-mode (loading or
+    /// search failure). Cleared on the next successful fetch.
+    pub discover_error: Option<String>,
+    /// When set, the Add flow renders a confirmation card showing
+    /// name/url/branch/commit/fingerprint before writing.
+    pub discover_pending_add: Option<Channel>,
+}
+
+/// Channels tab sub-mode. Only Discover requires opt-in; Installed is
+/// the default and always available.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ChannelsSubMode {
+    #[default]
+    Installed,
+    Discover,
 }
 
 /// Inputs backing the inline Add Channel form. Persisted only in memory —
@@ -311,6 +346,20 @@ pub enum Message {
     ChannelsAddIntroFprChanged(String),
     ChannelsApplyCompleted(Result<ChannelsFileLoad, String>),
     ChannelsToastDismissed,
+
+    // -- Discover sub-mode (Channels tab) ------------------------------
+    DiscoveryEnabledToggled(bool),
+    ChannelsSubModeSelected(ChannelsSubMode),
+    DiscoverChannelsLoaded(Result<Carrier<Vec<DiscoveredChannel>>, String>),
+    DiscoverQueryChanged(String),
+    DiscoverSearchDebounceTick(u64),
+    DiscoverPackagesLoaded {
+        seq: u64,
+        result: Result<Carrier<Vec<DiscoveredPackage>>, String>,
+    },
+    DiscoverAddClicked(Carrier<Channel>),
+    DiscoverAddCancelled,
+    DiscoverAddConfirmed,
 
     InstallRequested(String),
 
@@ -873,6 +922,120 @@ impl App {
                 Task::none()
             }
 
+            Message::DiscoveryEnabledToggled(v) => {
+                self.settings.discovery_enabled = v;
+                let _ = self.settings.save();
+                if !v {
+                    // Tear down everything discovery-related so no
+                    // stale data or in-flight task can re-surface.
+                    self.channels.sub_mode = ChannelsSubMode::Installed;
+                    self.channels.discovery = None;
+                    self.channels.discover_channels.clear();
+                    self.channels.discover_packages.clear();
+                    self.channels.discover_query.clear();
+                    self.channels.discover_error = None;
+                    self.channels.discover_pending_add = None;
+                    self.channels.discover_channels_loading = false;
+                    self.channels.discover_packages_loading = false;
+                }
+                Task::none()
+            }
+            Message::ChannelsSubModeSelected(mode) => {
+                if !self.settings.discovery_enabled && mode == ChannelsSubMode::Discover {
+                    // Hard gate — even if a stale message reaches us
+                    // while the toggle is off, refuse the transition.
+                    return Task::none();
+                }
+                self.channels.sub_mode = mode;
+                if mode == ChannelsSubMode::Discover
+                    && self.channels.discover_channels.is_empty()
+                    && !self.channels.discover_channels_loading
+                {
+                    return self.spawn_discover_channels_fetch();
+                }
+                Task::none()
+            }
+            Message::DiscoverChannelsLoaded(Ok(c)) => {
+                self.channels.discover_channels_loading = false;
+                if let Some(list) = c.take() {
+                    self.channels.discover_channels = list;
+                    self.channels.discover_error = None;
+                }
+                Task::none()
+            }
+            Message::DiscoverChannelsLoaded(Err(e)) => {
+                self.channels.discover_channels_loading = false;
+                self.channels.discover_error = Some(e);
+                Task::none()
+            }
+            Message::DiscoverQueryChanged(q) => {
+                self.channels.discover_query = q;
+                self.channels.discover_query_seq = self.channels.discover_query_seq.wrapping_add(1);
+                let seq = self.channels.discover_query_seq;
+                Task::perform(
+                    async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                        seq
+                    },
+                    Message::DiscoverSearchDebounceTick,
+                )
+            }
+            Message::DiscoverSearchDebounceTick(seq) => {
+                if seq != self.channels.discover_query_seq {
+                    return Task::none();
+                }
+                let q = self.channels.discover_query.trim().to_string();
+                if q.is_empty() {
+                    self.channels.discover_packages.clear();
+                    self.channels.discover_packages_loading = false;
+                    return Task::none();
+                }
+                self.channels.discover_packages_loading = true;
+                let client = self.ensure_discovery();
+                Task::perform(
+                    async move {
+                        client
+                            .search_packages(&q, 1, 50)
+                            .await
+                            .map(Carrier::new)
+                            .map_err(|e: DiscoveryError| e.to_string())
+                    },
+                    move |result| Message::DiscoverPackagesLoaded { seq, result },
+                )
+            }
+            Message::DiscoverPackagesLoaded { seq, result } => {
+                if seq != self.channels.discover_query_seq {
+                    return Task::none();
+                }
+                self.channels.discover_packages_loading = false;
+                match result {
+                    Ok(c) => {
+                        if let Some(list) = c.take() {
+                            self.channels.discover_packages = list;
+                            self.channels.discover_error = None;
+                        }
+                    }
+                    Err(e) => self.channels.discover_error = Some(e),
+                }
+                Task::none()
+            }
+            Message::DiscoverAddClicked(c) => {
+                if let Some(ch) = c.take() {
+                    self.channels.discover_pending_add = Some(ch);
+                }
+                Task::none()
+            }
+            Message::DiscoverAddCancelled => {
+                self.channels.discover_pending_add = None;
+                Task::none()
+            }
+            Message::DiscoverAddConfirmed => {
+                let Some(ch) = self.channels.discover_pending_add.take() else {
+                    return Task::none();
+                };
+                self.spawn_channels_apply(ChannelOp::AddChannel(ch))
+            }
+
             Message::InstallRequested(name) => self.start_op(OpKind::Install, move |g| {
                 g.package().install(&[name.as_str()])
             }),
@@ -1334,6 +1497,35 @@ impl App {
         )
     }
 
+    /// Lazily construct the discovery client. Only ever called from
+    /// inside a Discover-sub-mode code path (guarded upstream by
+    /// `settings.discovery_enabled`), so when the toggle is off this
+    /// method is unreachable and no `Discovery` allocation happens.
+    fn ensure_discovery(&mut self) -> Discovery {
+        if let Some(d) = self.channels.discovery.clone() {
+            return d;
+        }
+        let d = Discovery::new();
+        self.channels.discovery = Some(d.clone());
+        d
+    }
+
+    fn spawn_discover_channels_fetch(&mut self) -> Task<Message> {
+        self.channels.discover_channels_loading = true;
+        self.channels.discover_error = None;
+        let client = self.ensure_discovery();
+        Task::perform(
+            async move {
+                client
+                    .channels()
+                    .await
+                    .map(Carrier::new)
+                    .map_err(|e: DiscoveryError| e.to_string())
+            },
+            Message::DiscoverChannelsLoaded,
+        )
+    }
+
     fn spawn_system_load(&self) -> Task<Message> {
         let Some(g) = self.guix.clone() else {
             return Task::none();
@@ -1675,23 +1867,13 @@ fn describe_channels_error(e: &ChannelsError) -> String {
     e.to_string()
 }
 
-/// Computes the `.bak` sibling that `ChannelsFile::write_atomic`
-/// produces. **Must stay in lockstep with `libguix::channels::write_atomic`**:
-/// that function always calls `path.with_extension("scm.bak")` —
-/// regardless of the source extension — so `/tmp/foo` and `/tmp/foo.txt`
-/// both yield `/tmp/foo.scm.bak`. We mirror that exactly here so the
-/// "Restore last backup" button reliably finds the file.
-fn backup_path_for(path: &Path) -> PathBuf {
-    path.with_extension("scm.bak")
-}
-
 /// Reads the channels file and probes the `.bak` sibling in the same
 /// async task so the view never `stat`s from `view()`.
 async fn load_channels_file(path_override: Option<PathBuf>) -> Result<ChannelsFileLoad, String> {
     let file = ChannelsFile::read(path_override.as_deref())
         .await
         .map_err(|e| describe_channels_error(&e))?;
-    let bak = backup_path_for(&file.path);
+    let bak = file.backup_path();
     let backup_path = match tokio::fs::metadata(&bak).await {
         Ok(_) => Some(bak),
         Err(_) => None,
@@ -1724,32 +1906,6 @@ pub(crate) fn build_search_error(details: String) -> SearchError {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Mirrors `libguix::write_atomic`'s `path.with_extension("scm.bak")`
-    /// — if this diverges, the Channels "Restore last backup" button
-    /// will silently never appear.
-    #[test]
-    fn backup_path_for_scm_uses_scm_bak() {
-        assert_eq!(
-            backup_path_for(Path::new("/home/me/.config/guix/channels.scm")),
-            PathBuf::from("/home/me/.config/guix/channels.scm.bak")
-        );
-    }
-
-    /// `libguix::write_atomic` always overwrites the extension to
-    /// `scm.bak`, even when the source has a different (or no) extension.
-    /// We mirror that — this test pins the contract.
-    #[test]
-    fn backup_path_for_always_scm_bak() {
-        assert_eq!(
-            backup_path_for(Path::new("/tmp/channels.notscm")),
-            PathBuf::from("/tmp/channels.scm.bak")
-        );
-        assert_eq!(
-            backup_path_for(Path::new("/tmp/channels")),
-            PathBuf::from("/tmp/channels.scm.bak")
-        );
-    }
 
     #[test]
     fn user_ops_support_cancel() {

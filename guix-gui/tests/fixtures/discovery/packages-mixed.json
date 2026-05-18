@@ -1,0 +1,26 @@
+[
+  {
+    "name": "glue-utility",
+    "version": "0.1.0",
+    "channel": "glue",
+    "synopsis": "Some package from an introduced channel",
+    "description": "Longer description.",
+    "licenses": "[GPL 3+](https://www.gnu.org/licenses/gpl.html)",
+    "homepage": "https://example.org",
+    "module": "glue packages utility",
+    "file": "glue/packages/utility.scm",
+    "url": "https://git.sr.ht/~puercopop/glue/blob/default/glue/packages/utility.scm#L10"
+  },
+  {
+    "name": "wigust-extra",
+    "version": "1.0.0",
+    "channel": "wigust",
+    "synopsis": "Should be dropped — providing channel has no introduction",
+    "description": "",
+    "licenses": "",
+    "homepage": "",
+    "module": "wigust packages extra",
+    "file": "wigust/packages/extra.scm",
+    "url": "https://notabug.org/wigust/guix-wigust/blob/master/wigust/packages/extra.scm#L5"
+  }
+]

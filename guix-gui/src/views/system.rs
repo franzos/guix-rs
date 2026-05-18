@@ -231,6 +231,32 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .width(Length::Fill)
         .style(styles::card);
 
+    // Discovery opt-in — strict gate for the Discover sub-mode. When
+    // off, nothing related to discovery renders anywhere in the app.
+    let discovery_check = checkbox(app.settings.discovery_enabled)
+        .on_toggle(Message::DiscoveryEnabledToggled)
+        .size(16);
+    let discovery_inner = column![
+        text("Discovery").size(16).font(BOLD),
+        row![
+            discovery_check,
+            text("Browse channels and packages from toys.whereis.social").size(14),
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center),
+        text(
+            "Opt-in. Requires network access. When off, discovery does not \
+             appear anywhere in the app."
+        )
+        .size(12)
+        .color(MUTED),
+    ]
+    .spacing(4);
+    let discovery_card = container(discovery_inner)
+        .padding(20)
+        .width(Length::Fill)
+        .style(styles::card);
+
     let channels_section = column![
         text("CHANNELS").size(12).color(MUTED),
         container(channels_inner)
@@ -238,6 +264,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
             .width(Length::Fill)
             .style(styles::card),
         channels_source_card,
+        discovery_card,
     ]
     .spacing(8);
 
