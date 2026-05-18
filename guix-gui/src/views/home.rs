@@ -119,6 +119,22 @@ fn tile<'a>(app: &'a App, ra: &'static RecommendedApp) -> Element<'a, Message> {
 }
 
 fn tile_is_visible(app: &App, ra: &RecommendedApp) -> bool {
+    // Channel gating: every `required_channels` entry must be present in
+    // the user's configured channels. Apps without requirements pass.
+    // While the channel list is still loading at startup, gated apps
+    // stay hidden — better than showing an install that will fail.
+    let required = recommended::required_channels(ra.name);
+    if !required.is_empty() {
+        let configured: std::collections::HashSet<&str> = app
+            .updates
+            .channels
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
+        if !required.iter().all(|c| configured.contains(c)) {
+            return false;
+        }
+    }
     if !app.settings.app_metadata.enabled {
         return true;
     }

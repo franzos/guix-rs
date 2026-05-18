@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.3] - 2026-05-18
+
+### Added
+- About tab in the sidebar with project info, contributors, source link, and license notices
+- Development category on the Home tab, with `zed` as the first entry
+- Channel-gated Home tiles — apps that require a specific Guix channel (e.g. `pantherx`) only appear when that channel is configured. Initial set: `rnote`, `appflowy`, `qalculate-gtk`, `gitbutler`, `tidal-hifi`, `halloy`, `rustdesk`, `discord`, `syncthingtray`
+
+### Changed
+- Relicensed `libguix` as MIT OR Apache-2.0 so other tools can embed it freely. `guix-gui` remains GPL-3.0-only
+- Channel list is now loaded at startup (no longer only when opening the Updates tab) so Home filtering works from the first frame
+
 ## [0.1.2] - 2026-05-18
 
 ### Added

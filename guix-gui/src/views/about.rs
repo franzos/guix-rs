@@ -104,13 +104,11 @@ pub fn view(_app: &App) -> Element<'_, Message> {
 }
 
 fn section_card<'a>(title: &'a str, body: Column<'a, Message>) -> Element<'a, Message> {
-    container(
-        column![text(title).size(16).font(BOLD).color(TEXT), body].spacing(8),
-    )
-    .padding(20)
-    .width(Length::Fill)
-    .style(styles::card)
-    .into()
+    container(column![text(title).size(16).font(BOLD).color(TEXT), body].spacing(8))
+        .padding(20)
+        .width(Length::Fill)
+        .style(styles::card)
+        .into()
 }
 
 fn info_card<'a>(title: &'a str, body: String) -> Element<'a, Message> {

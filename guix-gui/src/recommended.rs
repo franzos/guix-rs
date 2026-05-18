@@ -11,6 +11,7 @@ pub enum Category {
     Graphics,
     AudioVideo,
     Office,
+    Development,
     Engineering,
     Internet,
     Game,
@@ -22,6 +23,7 @@ impl Category {
             Category::Graphics => "Graphics",
             Category::AudioVideo => "Audio & Video",
             Category::Office => "Office",
+            Category::Development => "Development",
             Category::Engineering => "Engineering",
             Category::Internet => "Internet",
             Category::Game => "Games",
@@ -34,9 +36,10 @@ impl Category {
             Category::Graphics => 0,
             Category::AudioVideo => 1,
             Category::Office => 2,
-            Category::Engineering => 3,
-            Category::Internet => 4,
-            Category::Game => 5,
+            Category::Development => 3,
+            Category::Engineering => 4,
+            Category::Internet => 5,
+            Category::Game => 6,
         }
     }
 }
@@ -46,6 +49,38 @@ pub struct RecommendedApp {
     pub name: &'static str,
     pub category: Category,
     pub blurb: &'static str,
+}
+
+/// Apps that need specific Guix channels configured before the install
+/// can succeed. Kept as a sparse lookup table so the much larger
+/// `RECOMMENDED` slice stays uncluttered — most apps need no gating.
+///
+/// Entries are matched case-sensitively against `Channel::name` from
+/// `guix describe`. All listed channels must be present for the app to
+/// appear on the Home tab.
+const CHANNEL_REQUIREMENTS: &[(&str, &[&str])] = &[
+    // pantherx channel (https://codeberg.org/gofranz/panther) ships GUI
+    // apps that aren't in the default Guix channel set. Gated so the
+    // tile only appears once the user has pantherx configured.
+    ("rnote", &["pantherx"]),
+    ("rustdesk", &["pantherx"]),
+    ("gitbutler", &["pantherx"]),
+    ("appflowy", &["pantherx"]),
+    ("halloy", &["pantherx"]),
+    ("qalculate-gtk", &["pantherx"]),
+    ("tidal-hifi", &["pantherx"]),
+    ("discord", &["pantherx"]),
+    ("syncthingtray", &["pantherx"]),
+];
+
+/// Channels (if any) that must be configured for `name` to be eligible
+/// for display. Empty slice means "available on the default channel set".
+pub fn required_channels(name: &str) -> &'static [&'static str] {
+    CHANNEL_REQUIREMENTS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, c)| *c)
+        .unwrap_or(&[])
 }
 
 /// GUI applications from the default Guix channel whose Flathub
@@ -170,6 +205,11 @@ pub const RECOMMENDED: &[RecommendedApp] = &[
         category: Category::AudioVideo,
         blurb: "Podcast subscription manager that syncs across devices.",
     },
+    RecommendedApp {
+        name: "tidal-hifi",
+        category: Category::AudioVideo,
+        blurb: "Unofficial desktop client for the Tidal music streaming service.",
+    },
     // -- Office --
     RecommendedApp {
         name: "libreoffice",
@@ -210,6 +250,32 @@ pub const RECOMMENDED: &[RecommendedApp] = &[
         name: "foliate",
         category: Category::Office,
         blurb: "Polished ebook reader with annotations and dictionary lookup.",
+    },
+    RecommendedApp {
+        name: "rnote",
+        category: Category::Office,
+        blurb: "Hand-drawn note taking and PDF annotation built for stylus input.",
+    },
+    RecommendedApp {
+        name: "appflowy",
+        category: Category::Office,
+        blurb: "Open-source workspace for docs, tasks, and databases — a Notion alternative.",
+    },
+    RecommendedApp {
+        name: "qalculate-gtk",
+        category: Category::Office,
+        blurb: "Multi-purpose calculator with units, currencies, plotting, and symbolic algebra.",
+    },
+    // -- Development --
+    RecommendedApp {
+        name: "zed",
+        category: Category::Development,
+        blurb: "High-performance multiplayer code editor — fast, GPU-rendered, collaborative.",
+    },
+    RecommendedApp {
+        name: "gitbutler",
+        category: Category::Development,
+        blurb: "Reimagined git workflow with virtual branches and a visual commit composer.",
     },
     // -- Engineering --
     RecommendedApp {
@@ -252,6 +318,26 @@ pub const RECOMMENDED: &[RecommendedApp] = &[
         name: "dino",
         category: Category::Internet,
         blurb: "Modern XMPP client focused on a clean, conversation-first interface.",
+    },
+    RecommendedApp {
+        name: "halloy",
+        category: Category::Internet,
+        blurb: "Modern Rust-built IRC client with a clean, native interface.",
+    },
+    RecommendedApp {
+        name: "rustdesk",
+        category: Category::Internet,
+        blurb: "Self-hostable remote desktop — an open alternative to TeamViewer.",
+    },
+    RecommendedApp {
+        name: "discord",
+        category: Category::Internet,
+        blurb: "Voice, video, and text chat platform popular with gaming and dev communities.",
+    },
+    RecommendedApp {
+        name: "syncthingtray",
+        category: Category::Internet,
+        blurb: "System-tray GUI for Syncthing — status, controls, and notifications at a glance.",
     },
     // -- Games --
     RecommendedApp {

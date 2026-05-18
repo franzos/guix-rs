@@ -358,17 +358,18 @@ impl App {
                     Tab::Home => self.spawn_home_icons_prefetch(),
                     Tab::Search => Task::none(),
                     Tab::Installed => Task::none(),
-                    Tab::Updates => Task::batch([
-                        self.spawn_channels_refresh(),
-                        self.spawn_pull_mtimes_refresh(),
-                    ]),
+                    Tab::Updates => self.spawn_pull_mtimes_refresh(),
                     Tab::System => self.spawn_system_load(),
                     Tab::About => Task::none(),
                 };
                 // Always load the installed list at startup — the Search
                 // detail pane needs it to flip Install/Remove correctly.
                 let installed_task = self.spawn_installed_refresh();
-                Task::batch([warmup_task, tab_task, installed_task])
+                // Always load channels at startup — the Home tab uses the
+                // channel list to decide which channel-gated tiles are
+                // eligible. Cheap enough to run unconditionally.
+                let channels_task = self.spawn_channels_refresh();
+                Task::batch([warmup_task, tab_task, installed_task, channels_task])
             }
             Message::DiscoveryComplete(Err(e)) => {
                 self.discovery_error = Some(e);
