@@ -50,6 +50,7 @@ pub(crate) use trace_debug;
 pub(crate) use trace_warn;
 
 mod build;
+mod channels;
 mod cmd;
 mod describe;
 mod discover;
@@ -70,12 +71,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub use build::{BuildBuilder, BuildOps};
+pub use channels::{ChannelOp, ChannelsError, ChannelsFile};
 pub use describe::DescribeOps;
 pub use discover::{Discovered, MIN_GUIX_VERSION_DATE};
 pub use error::{GuixError, PolkitFailure};
 pub use gc::{ByteSize, GcOps, GcOptions};
 pub use operation::{CancelHandle, EventStream, Operation};
 pub use package::{PackageOps, SearchFastResult, DEFAULT_SEARCH_LIMIT};
+pub use parsers::sexp::{parse_channels_list, ChannelsList};
 pub use pull::{PullOps, SystemPullOptions};
 pub use repl::Repl;
 pub use shell::{ShellBuilder, ShellOps};

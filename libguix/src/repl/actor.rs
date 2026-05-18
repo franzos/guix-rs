@@ -59,7 +59,20 @@ impl StderrRing {
     }
 }
 
+#[derive(Clone, Copy)]
+enum EvalMode {
+    /// Fresh `(make-module)` per request — no state leakage across evals.
+    /// Used by search, package metadata, and every other read path.
+    Fresh,
+    /// Evaluates inside the persistent `libguix-rs` namespace — used by
+    /// channels and (Phase 5) config ops, which load Scheme helpers once
+    /// at warmup and call into them many times. See NOTES.md "Fresh-module
+    /// isolation" for why this is opt-in.
+    Persistent,
+}
+
 struct Request {
+    mode: EvalMode,
     modules: Vec<String>,
     form: String,
     reply: oneshot::Sender<Result<lexpr::Value, GuixError>>,
@@ -171,8 +184,16 @@ impl Repl {
 
                 // Guarded SIGINT handler — only raises while %guix-rs-in-eval?
                 // is #t. See NOTES.md "SIGINT cancellation".
+                //
+                // We also pre-allocate the `libguix-rs` persistent
+                // namespace here so persistent-mode evals can target it
+                // immediately. The module is empty until something
+                // (warmup, channel-ops helper, etc.) defines into it.
                 let init = "(begin \
                             (define %guix-rs-in-eval? #f) \
+                            (define %libguix-rs-module \
+                              (let ((m (make-module))) \
+                                (beautify-user-module! m) m)) \
                             (sigaction SIGINT \
                               (lambda (sig) \
                                 (when %guix-rs-in-eval? \
@@ -187,6 +208,7 @@ impl Repl {
                 let _ = frame_rx.recv().await;
 
                 while let Some(Request {
+                    mode,
                     modules,
                     form,
                     reply,
@@ -201,7 +223,8 @@ impl Repl {
                     }
                     in_flight.store(true, Ordering::Release);
                     let guard = InFlightGuard(&in_flight);
-                    let res = handle_one(&mut stdin, &mut frame_rx, &ring, &modules, &form).await;
+                    let res =
+                        handle_one(&mut stdin, &mut frame_rx, &ring, mode, &modules, &form).await;
                     drop(guard);
                     let _ = reply.send(res);
                 }
@@ -255,9 +278,45 @@ impl Repl {
         Ok(())
     }
 
+    /// Lightweight warmup for channel/config ops — loads `(guix read-print)`,
+    /// `(guix channels)`, and the `channel_ops.scm` helper into the
+    /// persistent `libguix-rs` namespace. Does **not** run `fold-packages`
+    /// (that's the full search warmup, ~10-15 s cold). This one is sub-second.
+    pub async fn warmup_lightweight(&self) -> Result<(), GuixError> {
+        // Pull in the modules + helper definitions into the persistent
+        // module. We do this as a single persistent eval so the actor's
+        // bootstrap form is also charged here on the cold path.
+        let helper = include_str!("channel_ops.scm");
+        let form = format!(
+            "(begin \
+               (module-use! %libguix-rs-module (resolve-interface '(guix read-print))) \
+               (module-use! %libguix-rs-module (resolve-interface '(guix channels))) \
+               {helper} \
+               #t)"
+        );
+        let _ = self.eval_persistent(&form).await?;
+        Ok(())
+    }
+
+    /// Persistent-namespace eval — runs against the `libguix-rs` module
+    /// initialised at spawn. State (definitions, imports) persists across
+    /// calls. Used by channels.rs and (Phase 5) config.rs.
+    pub async fn eval_persistent(&self, form: &str) -> Result<lexpr::Value, GuixError> {
+        self.eval_dispatch(EvalMode::Persistent, &[], form).await
+    }
+
     /// Evaluates in a fresh module — see NOTES.md "Fresh-module isolation".
     pub async fn eval_with_modules(
         &self,
+        modules: &[&str],
+        form: &str,
+    ) -> Result<lexpr::Value, GuixError> {
+        self.eval_dispatch(EvalMode::Fresh, modules, form).await
+    }
+
+    async fn eval_dispatch(
+        &self,
+        mode: EvalMode,
         modules: &[&str],
         form: &str,
     ) -> Result<lexpr::Value, GuixError> {
@@ -265,6 +324,7 @@ impl Repl {
         self.inner
             .tx
             .send(Request {
+                mode,
                 modules: modules.iter().map(|s| (*s).to_owned()).collect(),
                 form: form.to_owned(),
                 reply: tx,
@@ -303,10 +363,11 @@ async fn handle_one(
     stdin: &mut ChildStdin,
     frame_rx: &mut mpsc::Receiver<String>,
     stderr_ring: &Arc<Mutex<StderrRing>>,
+    mode: EvalMode,
     modules: &[String],
     form: &str,
 ) -> Result<lexpr::Value, GuixError> {
-    let payload = wrap_expr(modules, form);
+    let payload = wrap_expr(mode, modules, form);
     let mut bytes = payload.into_bytes();
     bytes.push(b'\n');
 
@@ -354,7 +415,16 @@ async fn handle_one(
 
 /// Fresh-module isolation + per-eval exception handler + dynamic-wind
 /// flag toggle for SIGINT. See NOTES.md.
-fn wrap_expr(modules: &[String], form: &str) -> String {
+///
+/// Persistent mode targets `%libguix-rs-module` (allocated once at spawn)
+/// and skips the per-eval `make-module`, so definitions and `module-use!`
+/// imports survive across requests.
+fn wrap_expr(mode: EvalMode, modules: &[String], form: &str) -> String {
+    let module_expr = match mode {
+        EvalMode::Fresh => "(let ((mod (make-module))) (beautify-user-module! mod) mod)",
+        EvalMode::Persistent => "%libguix-rs-module",
+    };
+
     let mut imports = String::new();
     if !modules.is_empty() {
         imports.push_str("(for-each (lambda (iface) (module-use! m (resolve-interface iface))) '(");
@@ -370,7 +440,7 @@ fn wrap_expr(modules: &[String], form: &str) -> String {
     // dynamic-wind must be INSIDE with-exception-handler so SIGINT lands
     // in scope. The after-thunk clears the flag on normal/unwind both.
     format!(
-        "(let ((m (let ((mod (make-module))) (beautify-user-module! mod) mod))) \
+        "(let ((m {module_expr})) \
             {imports} \
             (with-exception-handler \
                 (lambda (e) (list 'exception (object->string e))) \
@@ -380,6 +450,7 @@ fn wrap_expr(modules: &[String], form: &str) -> String {
                     (lambda () (eval '{form} m)) \
                     (lambda () (set! %guix-rs-in-eval? #f)))) \
                 #:unwind? #t))",
+        module_expr = module_expr,
         imports = imports,
         form = form,
     )
@@ -505,7 +576,7 @@ mod tests {
 
     #[test]
     fn wrap_expr_includes_fresh_module() {
-        let w = wrap_expr(&["(gnu packages)".into()], "(+ 1 2)");
+        let w = wrap_expr(EvalMode::Fresh, &["(gnu packages)".into()], "(+ 1 2)");
         assert!(w.contains("make-module"));
         assert!(w.contains("beautify-user-module!"));
         assert!(w.contains("resolve-interface"));
@@ -518,7 +589,7 @@ mod tests {
     /// must be INSIDE with-exception-handler.
     #[test]
     fn wrap_expr_toggles_in_eval_flag_via_dynamic_wind() {
-        let w = wrap_expr(&[], "(+ 1 2)");
+        let w = wrap_expr(EvalMode::Fresh, &[], "(+ 1 2)");
         assert!(w.contains("dynamic-wind"), "missing dynamic-wind: {w}");
         assert!(
             w.contains("(set! %guix-rs-in-eval? #t)"),
@@ -539,16 +610,32 @@ mod tests {
     /// Regression: `'(FORM)` makes eval apply a literal — must be `'FORM`.
     #[test]
     fn wrap_expr_quotes_form_without_extra_parens() {
-        let w = wrap_expr(&[], "(+ 1 2)");
+        let w = wrap_expr(EvalMode::Fresh, &[], "(+ 1 2)");
         assert!(w.contains("'(+ 1 2)"));
         assert!(!w.contains("'((+ 1 2))"));
     }
 
     #[test]
     fn wrap_expr_omits_for_each_when_no_modules() {
-        let w = wrap_expr(&[], "(+ 1 2)");
+        let w = wrap_expr(EvalMode::Fresh, &[], "(+ 1 2)");
         assert!(!w.contains("for-each"));
         assert!(w.contains("(+ 1 2)"));
+    }
+
+    /// Persistent mode must target the named `%libguix-rs-module`, not
+    /// allocate a fresh one — definitions and imports survive across
+    /// calls. This is the read side of the channels-ops contract.
+    #[test]
+    fn wrap_expr_persistent_targets_named_module() {
+        let w = wrap_expr(EvalMode::Persistent, &[], "(+ 1 2)");
+        assert!(
+            w.contains("%libguix-rs-module"),
+            "missing persistent namespace: {w}"
+        );
+        assert!(
+            !w.contains("make-module"),
+            "persistent mode must not allocate a fresh module: {w}"
+        );
     }
 
     #[test]
