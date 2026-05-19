@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.4] - 2026-05-19
+
+### Added
+- Channels tab — view, add, and remove entries in `~/.config/guix/channels.scm` straight from the GUI, with restore from `.bak`. User-level only; system channels are deferred
+- Optional Discover sub-mode (off by default) — browse channels and packages indexed by `toys.whereis.social` and add them with one click, including an "Add channel & install" shortcut for packages
+- Automatic rollback offer when a `guix pull` fails after a channel edit, with known-bug hints surfaced from the pull's progress stream
+- Per-channel Remove warning listing the installed packages attributed to that channel via `(guix describe) package-channels`
+
+### Changed
+- Atomic write for `channels.scm` now `fsync`s the tmp file and the parent directory, and copies (rather than renames) the previous file to `.bak` so the canonical path is never absent mid-write
+- Settings and Channels surfaces distinguish user-level paths from system-level paths more clearly
+
 ## [0.1.3] - 2026-05-18
 
 ### Added
