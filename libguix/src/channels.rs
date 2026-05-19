@@ -50,6 +50,15 @@ pub enum ChannelsError {
     #[error("channels.scm at {path} is store-managed (guix home / read-only). Set a writable source-path override.")]
     StoreManaged { path: PathBuf },
 
+    #[error("channel name `{name}` contains characters that aren't valid in a Scheme symbol")]
+    InvalidName { name: String },
+
+    #[error("channels.scm not found at {path}")]
+    FileNotFound { path: PathBuf },
+
+    #[error("internal error: {0}")]
+    Internal(String),
+
     #[error(transparent)]
     Guix(#[from] GuixError),
 
@@ -90,13 +99,16 @@ impl ChannelsFile {
         // `channels.scm` is at most a few KB — a blocking read is fine
         // and avoids pulling in the `fs` feature of tokio across the crate.
         let read_path = path.clone();
-        let raw = tokio::task::spawn_blocking(move || std::fs::read_to_string(&read_path))
+        let raw = match tokio::task::spawn_blocking(move || std::fs::read_to_string(&read_path))
             .await
-            .map_err(|e| ChannelsError::ParseError {
-                message: format!("read task panicked: {e}"),
-                line: None,
-                column: None,
-            })??;
+            .map_err(|e| ChannelsError::Internal(format!("read task panicked: {e}")))?
+        {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(ChannelsError::FileNotFound { path });
+            }
+            Err(e) => return Err(ChannelsError::Io(e)),
+        };
         let list = parse_channels_list(&raw).map_err(|e| match e {
             GuixError::Parse(msg) => ChannelsError::ParseError {
                 message: msg,
@@ -175,6 +187,11 @@ impl ChannelsFile {
     fn preflight(&self, op: &ChannelOp) -> Result<(), ChannelsError> {
         match op {
             ChannelOp::AddChannel(ch) => {
+                if !is_valid_channel_name(&ch.name) {
+                    return Err(ChannelsError::InvalidName {
+                        name: ch.name.clone(),
+                    });
+                }
                 if ch.introduction_commit.is_none() || ch.introduction_fingerprint.is_none() {
                     return Err(ChannelsError::MissingIntroduction {
                         name: ch.name.clone(),
@@ -205,10 +222,12 @@ impl ChannelsFile {
         }
     }
 
-    /// Atomic write — refuses store-managed paths. Writes to a sibling
-    /// `.tmp`, renames the original to `.bak` (best-effort), then
-    /// renames `.tmp` to `path`. All three filesystem ops live in the
-    /// same directory so the final rename is atomic.
+    /// Atomic write — refuses store-managed paths. Writes `.tmp` +
+    /// fsync, copies the current file to `.bak`, then renames `.tmp`
+    /// over the target and fsyncs the parent.
+    ///
+    /// Each successful write overwrites the previous `.bak` — callers
+    /// who need a session-pristine snapshot must capture it themselves.
     pub async fn write_atomic(&self, content: &str) -> Result<(), ChannelsError> {
         if self.is_store_managed {
             return Err(ChannelsError::StoreManaged {
@@ -220,26 +239,41 @@ impl ChannelsFile {
         let bak_path = self.backup_path();
         let content = content.to_owned();
         tokio::task::spawn_blocking(move || -> std::io::Result<()> {
-            let tmp_path = path.with_extension("scm.tmp");
+            use std::fs;
+            use std::io::Write as _;
 
-            // Best-effort backup. Missing source isn't an error — we
-            // might be creating channels.scm for the first time.
-            match std::fs::rename(&path, &bak_path) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e),
+            let tmp_path = path.with_extension("scm.tmp");
+            let parent = path.parent().unwrap_or_else(|| Path::new("."));
+
+            {
+                let mut f = fs::File::create(&tmp_path)?;
+                f.write_all(content.as_bytes())?;
+                f.sync_all()?;
             }
 
-            std::fs::write(&tmp_path, content.as_bytes())?;
-            std::fs::rename(&tmp_path, &path)?;
+            // Copy (not rename) so the canonical path is never empty
+            // between steps. Missing source means first-time write.
+            match fs::copy(&path, &bak_path) {
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    let _ = fs::remove_file(&tmp_path);
+                    return Err(e);
+                }
+            }
+
+            fs::rename(&tmp_path, &path)?;
+
+            // Best-effort: on filesystems without directory fsync this
+            // is a no-op, not an error.
+            if let Ok(dir) = fs::File::open(parent) {
+                let _ = dir.sync_all();
+            }
+
             Ok(())
         })
         .await
-        .map_err(|e| ChannelsError::ParseError {
-            message: format!("write task panicked: {e}"),
-            line: None,
-            column: None,
-        })??;
+        .map_err(|e| ChannelsError::Internal(format!("write task panicked: {e}")))??;
 
         Ok(())
     }
@@ -294,13 +328,22 @@ fn channel_to_sexp(ch: &Channel) -> String {
     s
 }
 
-/// Defensive symbol sanitisation — channel names come from the
-/// discovery API in Phase 2 so they should already be Scheme-safe, but
-/// stripping anything pathological keeps the eval form well-formed.
-fn scheme_symbol(name: &str) -> String {
-    name.chars()
-        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '+' | '.'))
-        .collect()
+/// Channel names must shape into a Scheme symbol so the embedded
+/// `(name 'foo)` form parses. Validated up-front by `preflight` —
+/// anything that fails this check is rejected with `InvalidName`
+/// rather than silently rewritten on disk.
+pub(crate) fn is_valid_channel_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '+' | '.'))
+}
+
+/// Emits the bare symbol form for a name that has already passed
+/// [`is_valid_channel_name`]. Callers must validate first — this is a
+/// formatter, not a sanitiser.
+fn scheme_symbol(name: &str) -> &str {
+    name
 }
 
 /// Scheme string literal — escapes `\` and `"`.
@@ -405,11 +448,8 @@ fn interpret_response(v: &lexpr::Value) -> Result<String, ChannelsError> {
 }
 
 fn default_path() -> Result<PathBuf, ChannelsError> {
-    let home = std::env::var_os("HOME").ok_or_else(|| ChannelsError::ParseError {
-        message: "HOME not set; pass an explicit path".into(),
-        line: None,
-        column: None,
-    })?;
+    let home = std::env::var_os("HOME")
+        .ok_or_else(|| ChannelsError::Internal("HOME not set; pass an explicit path".into()))?;
     let mut p = PathBuf::from(home);
     p.push(".config/guix/channels.scm");
     Ok(p)
@@ -483,9 +523,18 @@ mod tests {
     }
 
     #[test]
-    fn scheme_symbol_filters_bad_chars() {
-        assert_eq!(scheme_symbol("good-name_1.2"), "good-name_1.2");
-        assert_eq!(scheme_symbol("bad name; (drop)"), "badnamedrop");
+    fn is_valid_channel_name_accepts_scheme_safe() {
+        assert!(is_valid_channel_name("good-name_1.2"));
+        assert!(is_valid_channel_name("guix"));
+        assert!(is_valid_channel_name("non+guix"));
+    }
+
+    #[test]
+    fn is_valid_channel_name_rejects_pathological() {
+        assert!(!is_valid_channel_name(""));
+        assert!(!is_valid_channel_name("bad name"));
+        assert!(!is_valid_channel_name("nope;(drop)"));
+        assert!(!is_valid_channel_name("with/slash"));
     }
 
     /// `/gnu/store/...` symlink targets must be flagged as

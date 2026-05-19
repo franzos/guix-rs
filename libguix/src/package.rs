@@ -33,12 +33,6 @@ impl PackageOps {
         self.guix.binary_path()
     }
 
-    /// Crate-internal access for sibling modules (`installed.rs`) that
-    /// extend `PackageOps` and need to reach the underlying `Guix`.
-    pub(crate) fn guix_inner(&self) -> &crate::Guix {
-        &self.guix
-    }
-
     fn profile(&self) -> Option<&std::path::Path> {
         self.guix.profile_path()
     }

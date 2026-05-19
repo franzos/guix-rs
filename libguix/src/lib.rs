@@ -77,6 +77,7 @@ pub use describe::DescribeOps;
 pub use discover::{Discovered, MIN_GUIX_VERSION_DATE};
 pub use error::{GuixError, PolkitFailure};
 pub use gc::{ByteSize, GcOps, GcOptions};
+pub use installed::{InstalledOps, UNKNOWN_BUCKET};
 pub use operation::{CancelHandle, EventStream, Operation};
 pub use package::{PackageOps, SearchFastResult, DEFAULT_SEARCH_LIMIT};
 pub use parsers::sexp::{parse_channels_list, ChannelsList};
@@ -190,6 +191,10 @@ impl Guix {
 
     pub fn pull(&self) -> PullOps {
         PullOps::new(self.clone())
+    }
+
+    pub fn installed(&self) -> InstalledOps {
+        InstalledOps::new(self.clone())
     }
 
     pub fn gc(&self) -> GcOps {

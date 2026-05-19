@@ -9,8 +9,9 @@ use iced::widget::{button, column, container, row, scrollable, text, text_input,
 use iced::{Element, Length};
 use libguix::Channel;
 
-use crate::app::{should_render_remove_warning, App, ChannelsSubMode, Message, RollbackOffer};
+use crate::app::{should_render_remove_warning, App, Message};
 use crate::carrier::Carrier;
+use crate::channels::{ChannelsSubMode, RollbackOffer};
 use crate::settings::Tab;
 use crate::styles::{self, BOLD, MUTED};
 use guix_gui::discovery::{DiscoveredChannel, DiscoveredPackage};
@@ -687,28 +688,49 @@ fn add_channel_form(app: &App) -> Element<'_, Message> {
         .unwrap_or(true);
     let form = &app.channels.add_form;
 
+    let submit_enabled = writable
+        && !app.channels.saving
+        && !form.name.trim().is_empty()
+        && !form.url.trim().is_empty()
+        && !form.intro_commit.trim().is_empty()
+        && !form.intro_fpr.trim().is_empty();
+    // Pressing Enter in any field submits the form when the required
+    // fields are filled. Matches the LoadPathAdd input on the System tab.
+    let submit_on_enter = || {
+        if submit_enabled {
+            Some(Message::ChannelsAddSubmitted)
+        } else {
+            None
+        }
+    };
+
     let name_input = text_input("e.g. nonguix", &form.name)
         .on_input(Message::ChannelsAddNameChanged)
+        .on_submit_maybe(submit_on_enter())
         .padding(8)
         .size(13)
         .width(Length::Fill);
     let url_input = text_input("https://gitlab.com/nonguix/nonguix", &form.url)
         .on_input(Message::ChannelsAddUrlChanged)
+        .on_submit_maybe(submit_on_enter())
         .padding(8)
         .size(13)
         .width(Length::Fill);
     let branch_input = text_input("master (optional)", &form.branch)
         .on_input(Message::ChannelsAddBranchChanged)
+        .on_submit_maybe(submit_on_enter())
         .padding(8)
         .size(13)
         .width(Length::Fill);
     let commit_input = text_input("commit hash (optional)", &form.commit)
         .on_input(Message::ChannelsAddCommitChanged)
+        .on_submit_maybe(submit_on_enter())
         .padding(8)
         .size(13)
         .width(Length::Fill);
     let intro_commit_input = text_input("introduction commit hash", &form.intro_commit)
         .on_input(Message::ChannelsAddIntroCommitChanged)
+        .on_submit_maybe(submit_on_enter())
         .padding(8)
         .size(13)
         .width(Length::Fill);
@@ -717,16 +739,10 @@ fn add_channel_form(app: &App) -> Element<'_, Message> {
         &form.intro_fpr,
     )
     .on_input(Message::ChannelsAddIntroFprChanged)
+    .on_submit_maybe(submit_on_enter())
     .padding(8)
     .size(13)
     .width(Length::Fill);
-
-    let submit_enabled = writable
-        && !app.channels.saving
-        && !form.name.trim().is_empty()
-        && !form.url.trim().is_empty()
-        && !form.intro_commit.trim().is_empty()
-        && !form.intro_fpr.trim().is_empty();
     let submit_btn = button(text("Add channel").size(13))
         .padding([8, 16])
         .style(styles::btn_secondary)

@@ -15,26 +15,27 @@
 ;;; element list. An empty list means attribution failed — Rust buckets
 ;;; that case under `(unknown)`.
 
+;; Response shape mirrors channel_ops: `(ok (<entry> ...))` on success,
+;; `(error <message>)` on failure. Rust surfaces the error rather than
+;; rendering an empty profile.
 (define (libguix-rs:installed-with-locations profile-path)
   (catch
    #t
    (lambda ()
      (let* ((m (profile-manifest profile-path))
             (entries (manifest-entries m)))
-       (map (lambda (e)
-              (let* ((name    (manifest-entry-name e))
-                     (version (manifest-entry-version e))
-                     (pkg     (false-if-exception
-                               (specification->package name)))
-                     (source  (libguix-rs:package-source-file pkg))
-                     (chans   (libguix-rs:package-channel-names pkg)))
-                (list name version source chans)))
-            entries)))
+       (list 'ok
+             (map (lambda (e)
+                    (let* ((name    (manifest-entry-name e))
+                           (version (manifest-entry-version e))
+                           (pkg     (false-if-exception
+                                     (specification->package name)))
+                           (source  (libguix-rs:package-source-file pkg))
+                           (chans   (libguix-rs:package-channel-names pkg)))
+                      (list name version source chans)))
+                  entries))))
    (lambda (key . args)
-     ;; On any failure return an empty list — Rust treats this as "no
-     ;; introspection available" and falls back to the minimal Remove
-     ;; dialog. Don't surface as an error.
-     '())))
+     (list 'error (format #f "~a: ~a" key args)))))
 
 ;; The package's source-file (the `.scm` defining it), as recorded in
 ;; `(package-location)`. Returns "" if unavailable — Rust tolerates the

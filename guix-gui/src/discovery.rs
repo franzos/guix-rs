@@ -23,7 +23,7 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use libguix::{parse_channels_list, Channel};
 use serde::Deserialize;
@@ -32,6 +32,9 @@ use tokio::sync::RwLock;
 pub const TOYS_API: &str = "https://toys.whereis.social/api";
 const USER_AGENT: &str = concat!("guix-gui/", env!("CARGO_PKG_VERSION"));
 const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
+/// Channels turn over slowly on the catalog side — an hour is plenty
+/// to keep a long-lived session honest without hammering the API.
+const CACHE_TTL: Duration = Duration::from_secs(60 * 60);
 
 /// Response shape for `/api/channels`. Fields mirror the API verbatim
 /// (camelCase via serde rename). `subscriptionSnippet` is a Scheme
@@ -152,28 +155,47 @@ pub struct Discovery {
 struct ChannelCache {
     channels: Vec<DiscoveredChannel>,
     introduced_names: HashSet<String>,
+    fetched_at: Instant,
+}
+
+impl ChannelCache {
+    fn is_fresh(&self) -> bool {
+        self.fetched_at.elapsed() < CACHE_TTL
+    }
 }
 
 impl Discovery {
-    pub fn new() -> Self {
+    /// Returns `Err` if the HTTP client builder fails — caller decides
+    /// how to surface that. A silent fallback to `Client::new()` would
+    /// drop the user-agent and timeout, which is the worst combination
+    /// for a constrained sandbox.
+    pub fn new() -> Result<Self, DiscoveryError> {
         let http = reqwest::Client::builder()
             .user_agent(USER_AGENT)
             .timeout(HTTP_TIMEOUT)
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
-        Self {
+            .build()?;
+        Ok(Self {
             http,
             cache: Arc::new(RwLock::new(None)),
-        }
+        })
+    }
+
+    /// Drops the cached channel set so the next `channels()` call hits
+    /// the network. The TTL handles long-running sessions on its own.
+    pub async fn invalidate(&self) {
+        *self.cache.write().await = None;
     }
 
     /// Returns every channel from the API that carries a valid
     /// introduction (commit + fingerprint) in its `subscriptionSnippet`.
     /// Unintroduced entries are dropped at the client — the UI must
-    /// never see them.
+    /// never see them. Cached for [`CACHE_TTL`]; call [`invalidate`] to
+    /// force a refetch sooner.
     pub async fn channels(&self) -> Result<Vec<DiscoveredChannel>, DiscoveryError> {
         if let Some(cache) = self.cache.read().await.as_ref() {
-            return Ok(cache.channels.clone());
+            if cache.is_fresh() {
+                return Ok(cache.channels.clone());
+            }
         }
         let url = format!("{TOYS_API}/channels");
         let raw: Vec<DiscoveredChannel> = self
@@ -189,6 +211,7 @@ impl Discovery {
         let cache = ChannelCache {
             channels: filtered.clone(),
             introduced_names,
+            fetched_at: Instant::now(),
         };
         *self.cache.write().await = Some(cache);
         Ok(filtered)
@@ -203,9 +226,17 @@ impl Discovery {
         page: u32,
         limit: u32,
     ) -> Result<Vec<DiscoveredPackage>, DiscoveryError> {
-        // Ensure the channel cache is populated so the cross-reference
-        // below has something to match against.
+        // Snapshot the introduced-channel set up front — a concurrent
+        // TTL expiry or `invalidate()` between populate and read could
+        // otherwise leave us holding `None`.
         let _ = self.channels().await?;
+        let introduced_names: HashSet<String> = self
+            .cache
+            .read()
+            .await
+            .as_ref()
+            .map(|c| c.introduced_names.clone())
+            .unwrap_or_default();
         let url = format!("{TOYS_API}/packages");
         let raw: Vec<DiscoveredPackage> = self
             .http
@@ -220,18 +251,7 @@ impl Discovery {
             .error_for_status()?
             .json()
             .await?;
-        let cache_guard = self.cache.read().await;
-        let names = cache_guard
-            .as_ref()
-            .map(|c| &c.introduced_names)
-            .expect("channels() populates the cache before search returns");
-        Ok(filter_packages_by_introduced(raw, names))
-    }
-}
-
-impl Default for Discovery {
-    fn default() -> Self {
-        Self::new()
+        Ok(filter_packages_by_introduced(raw, &introduced_names))
     }
 }
 

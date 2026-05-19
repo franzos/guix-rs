@@ -25,12 +25,23 @@ use std::path::PathBuf;
 
 use crate::error::GuixError;
 use crate::types::InstalledPackage;
+use crate::Guix;
 
 /// Bucket label assigned to entries whose channel attribution failed.
 /// Public so callers can filter it out of user-facing surfaces.
 pub const UNKNOWN_BUCKET: &str = "(unknown)";
 
-impl crate::package::PackageOps {
+/// Installed-package introspection via the REPL actor.
+#[derive(Clone)]
+pub struct InstalledOps {
+    guix: Guix,
+}
+
+impl InstalledOps {
+    pub(crate) fn new(guix: Guix) -> Self {
+        Self { guix }
+    }
+
     /// Returns installed packages grouped by their source channel.
     ///
     /// Channel attribution comes from `(guix describe) package-channels`.
@@ -41,10 +52,8 @@ impl crate::package::PackageOps {
     /// Walks the user's current profile manifest via the REPL actor's
     /// persistent namespace. Slow on big profiles (~hundreds of ms) —
     /// callers should cache.
-    pub async fn installed_by_channel(
-        &self,
-    ) -> Result<HashMap<String, Vec<InstalledPackage>>, GuixError> {
-        let repl = self.guix_inner().repl().await?;
+    pub async fn by_channel(&self) -> Result<HashMap<String, Vec<InstalledPackage>>, GuixError> {
+        let repl = self.guix.repl().await?;
         let profile = resolve_profile_path();
         let profile_str = profile.to_string_lossy().into_owned();
 
@@ -52,7 +61,40 @@ impl crate::package::PackageOps {
         let form = format!("(libguix-rs:installed-with-locations {escaped})");
         let value = repl.eval_persistent(&form).await?;
 
-        Ok(bucket_entries(parse_entries(value)))
+        let entries = interpret_response(value)?;
+        Ok(bucket_entries(entries))
+    }
+}
+
+/// Unwraps the `(ok …)` / `(error …)` response shape from
+/// `installed_ops.scm`. The error variant is propagated so callers can
+/// log it instead of silently rendering an empty profile.
+fn interpret_response(value: lexpr::Value) -> Result<Vec<InstalledEntry>, GuixError> {
+    let mut it = value
+        .list_iter()
+        .ok_or_else(|| GuixError::Parse("installed-with-locations: not a list".into()))?;
+    let head = it.next().and_then(lexpr::Value::as_symbol).ok_or_else(|| {
+        GuixError::Parse("installed-with-locations: missing response head".into())
+    })?;
+    match head {
+        "ok" => {
+            let payload = it.next().ok_or_else(|| {
+                GuixError::Parse("installed-with-locations: ok response missing payload".into())
+            })?;
+            Ok(parse_entries(payload.clone()))
+        }
+        "error" => {
+            let msg = it
+                .next()
+                .and_then(scheme_string_value)
+                .unwrap_or_else(|| "<no message>".into());
+            Err(GuixError::Parse(format!(
+                "installed-with-locations failed: {msg}"
+            )))
+        }
+        other => Err(GuixError::Parse(format!(
+            "installed-with-locations: unexpected head `{other}`"
+        ))),
     }
 }
 

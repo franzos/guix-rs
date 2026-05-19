@@ -5,13 +5,17 @@ use iced::theme::Palette;
 use iced::widget::{button, column, container, row, scrollable, svg, text, tooltip, Column, Space};
 use iced::{Alignment, Element, Font, Length, Subscription, Task, Theme};
 use libguix::{
-    CancelHandle, Channel, ChannelOp, ChannelsError, ChannelsFile, Guix, GuixError,
-    InstalledPackage, KnownBug, Operation, PackageSummary, ProgressEvent, ProgressStream, PullOps,
-    ReconfigureOptions, SearchFastResult, SystemPullOptions, DEFAULT_SEARCH_LIMIT,
+    CancelHandle, Channel, ChannelOp, ChannelsFile, Guix, GuixError, InstalledPackage, KnownBug,
+    Operation, PackageSummary, ProgressEvent, ProgressStream, PullOps, ReconfigureOptions,
+    SearchFastResult, SystemPullOptions, DEFAULT_SEARCH_LIMIT,
 };
 
 use crate::app_metadata::{AppMetadata, MetadataClient};
 use crate::carrier::Carrier;
+use crate::channels::{
+    describe_channels_error, load_channels_file, outcome_to_result, ChannelsFileLoad,
+    ChannelsFileLoadOutcome, ChannelsState, ChannelsSubMode, RollbackOffer,
+};
 use crate::operation_subscription::{operation_subscription, OpEvent, OpId, OpKind, SharedOp};
 use crate::progress_summary::ProgressSummary;
 use crate::recommended::RECOMMENDED;
@@ -155,175 +159,6 @@ pub struct PullMtimes {
     pub system_profile: Option<std::time::SystemTime>,
 }
 
-/// Bundles the parsed `ChannelsFile` with the cached `.bak` presence so
-/// the view never has to `stat(2)` from inside `view()`. The bak probe
-/// runs in the same async task as the file read.
-#[derive(Debug, Clone)]
-pub struct ChannelsFileLoad {
-    pub file: ChannelsFile,
-    pub backup_path: Option<PathBuf>,
-}
-
-/// Channels tab state — file load, in-flight write, inline add form,
-/// transient toasts, and the pending-remove confirmation latch.
-#[derive(Default)]
-pub struct ChannelsState {
-    pub file: Option<ChannelsFile>,
-    pub loading: bool,
-    pub saving: bool,
-    /// Display string for the most recent error (file read, validation,
-    /// or apply/write). We render the string rather than the structured
-    /// variant so the view stays simple — the `ChannelsError::Display`
-    /// impl already carries line/column when available.
-    pub error: Option<String>,
-    pub add_form: AddChannelForm,
-    /// Transient post-write feedback ("Channel added — Pull now?").
-    pub last_message: Option<String>,
-    /// Inline submit-time validation feedback for the Add form
-    /// (mostly: missing-required-field, duplicate-name).
-    pub validation_message: Option<String>,
-    /// When set, the row for this channel renders a Confirm/Cancel pair
-    /// instead of a plain Remove button. Cleared on cancel or after the
-    /// write completes.
-    pub pending_remove: Option<String>,
-    /// Cached path to the most recent `.bak` written by `write_atomic`,
-    /// when one exists on disk. Set during the same async load that
-    /// produces `file` so the view never has to `stat(2)`. `None` when no
-    /// backup is present or the file itself hasn't been loaded yet.
-    pub backup_path: Option<PathBuf>,
-    /// When set, the header strip renders a Confirm/Cancel pair instead
-    /// of the "Restore last backup" button. Cleared on cancel or after
-    /// the restore completes.
-    pub pending_restore: bool,
-    /// Active sub-mode within the Channels tab. Only rendered when
-    /// `Settings::discovery_enabled` is true — strictly opt-in, so the
-    /// default Installed view is identical to the pre-discovery layout.
-    /// Not persisted across restarts: defaults to Installed every time.
-    pub sub_mode: ChannelsSubMode,
-    /// Lazily-constructed discovery client. Stays `None` while the
-    /// discovery toggle is off (no HTTP client, no allocations). Built
-    /// on first transition into the Discover sub-mode.
-    pub discovery: Option<Discovery>,
-    /// Most recent successful `Discovery::channels()` response, filtered
-    /// to introduced channels only.
-    pub discover_channels: Vec<DiscoveredChannel>,
-    /// Loading flag for the channels listing.
-    pub discover_channels_loading: bool,
-    /// Search input + debounce seq for the package search box.
-    pub discover_query: String,
-    pub discover_query_seq: u64,
-    pub discover_packages: Vec<DiscoveredPackage>,
-    pub discover_packages_loading: bool,
-    /// Single muted error line for the Discover sub-mode (loading or
-    /// search failure). Cleared on the next successful fetch.
-    pub discover_error: Option<String>,
-    /// When set, the Add flow renders a confirmation card showing
-    /// name/url/branch/commit/fingerprint before writing.
-    pub discover_pending_add: Option<Channel>,
-    /// Paired with `discover_pending_add` — when the user clicked
-    /// "Add channel & install" on a package row, the package's name is
-    /// stashed here so the post-apply toast can offer the combined
-    /// "Pull, then install <pkg>" CTA. `None` when the Add originated
-    /// from the channel row's "Add" button (no install follow-up).
-    pub discover_pending_install: Option<String>,
-    /// When true, the post-apply toast renders the combined
-    /// "Pull, then install <pkg>" / "Pull only" CTA instead of the bare
-    /// "Pull now" button. Cleared alongside the toast.
-    pub post_apply_install_prompt: Option<String>,
-    /// Package name to install after a Channels-tab-triggered user pull
-    /// succeeds. Set when the user clicks the combined CTA. Cleared on
-    /// pull completion (success or failure) regardless of outcome —
-    /// failure surfaces the rollback offer instead and never auto-installs.
-    pub pending_install: Option<String>,
-    /// Marks the next `OpKind::Pull` completion as belonging to a
-    /// channels-tab edit. On non-zero exit we then surface the rollback
-    /// offer; on success we honour `pending_install` if set.
-    pub pending_pull_after_write: bool,
-    /// When `Some`, the Channels tab renders the rollback CTA in the
-    /// header area, replacing the post-write "Pull now" toast.
-    pub rollback_offer: Option<RollbackOffer>,
-    /// Cache of installed packages bucketed by source channel — backs
-    /// the per-channel Remove warning dialog. `None` while loading or
-    /// never fetched; `Some(empty)` when the lookup failed (so we
-    /// don't retry every paint). Invalidated on Install/Remove/Upgrade
-    /// completion so a fresh dialog re-fetches.
-    pub installed_by_channel: Option<HashMap<String, Vec<InstalledPackage>>>,
-    /// Race guard for the introspection fetch — true between dispatch
-    /// and reply so a second concurrent trigger doesn't queue.
-    pub installed_by_channel_loading: bool,
-}
-
-/// State for the post-pull-failure rollback CTA. The `.bak` snapshot is
-/// captured at offer-creation time so a concurrent edit can't shift it
-/// under the user. `bug` is set when the failed pull's progress stream
-/// surfaced a known upstream bug worth naming in the CTA.
-#[derive(Debug, Clone)]
-pub struct RollbackOffer {
-    pub backup_path: Option<PathBuf>,
-    pub bug: Option<KnownBug>,
-}
-
-/// Channels tab sub-mode. Only Discover requires opt-in; Installed is
-/// the default and always available.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ChannelsSubMode {
-    #[default]
-    Installed,
-    Discover,
-}
-
-/// Inputs backing the inline Add Channel form. Persisted only in memory —
-/// abandoned drafts reset on app restart, which is the right thing.
-#[derive(Default)]
-pub struct AddChannelForm {
-    pub name: String,
-    pub url: String,
-    pub branch: String,
-    pub commit: String,
-    pub intro_commit: String,
-    pub intro_fpr: String,
-}
-
-impl AddChannelForm {
-    pub fn clear(&mut self) {
-        *self = Self::default();
-    }
-
-    /// Builds a `Channel` from the trimmed fields. Returns `Err` with a
-    /// user-facing message if any required field is empty.
-    pub fn to_channel(&self) -> Result<Channel, String> {
-        let name = self.name.trim();
-        let url = self.url.trim();
-        let intro_commit = self.intro_commit.trim();
-        let intro_fpr = self.intro_fpr.trim();
-        if name.is_empty() {
-            return Err("Name is required.".into());
-        }
-        if url.is_empty() {
-            return Err("URL is required.".into());
-        }
-        if intro_commit.is_empty() || intro_fpr.is_empty() {
-            return Err("Introduction commit and fingerprint are required.".into());
-        }
-        let opt = |s: &String| {
-            let t = s.trim();
-            if t.is_empty() {
-                None
-            } else {
-                Some(t.to_owned())
-            }
-        };
-        Ok(Channel {
-            name: name.to_owned(),
-            url: url.to_owned(),
-            branch: opt(&self.branch),
-            commit: opt(&self.commit),
-            introduction_commit: Some(intro_commit.to_owned()),
-            introduction_fingerprint: Some(intro_fpr.to_owned()),
-        })
-    }
-}
-
 #[derive(Default)]
 pub struct SystemState {
     pub current_config_display: Option<String>,
@@ -376,7 +211,7 @@ pub enum Message {
     LoadPathRemove(usize),
 
     ChannelsRefresh,
-    ChannelsFileLoaded(Result<ChannelsFileLoad, String>),
+    ChannelsFileLoaded(ChannelsFileLoadOutcome),
     ChannelsRestoreClicked,
     ChannelsRestoreCancelled,
     ChannelsRestoreConfirmed,
@@ -879,26 +714,26 @@ impl App {
             }
 
             Message::ChannelsRefresh => self.spawn_channels_file_load(),
-            Message::ChannelsFileLoaded(Ok(load)) => {
+            Message::ChannelsFileLoaded(outcome) => {
                 self.channels.loading = false;
-                self.channels.file = Some(load.file);
-                self.channels.backup_path = load.backup_path;
-                self.channels.error = None;
-                Task::none()
-            }
-            Message::ChannelsFileLoaded(Err(e)) => {
-                self.channels.loading = false;
-                // Missing-file errors aren't surfaced as an error — the
-                // empty state renders instead so the user can create the
-                // file by adding their first channel.
-                if e.contains("No such file") || e.contains("not found") || e.contains("NotFound") {
-                    self.channels.file = None;
-                    self.channels.backup_path = None;
-                    self.channels.error = None;
-                } else {
-                    self.channels.file = None;
-                    self.channels.backup_path = None;
-                    self.channels.error = Some(e);
+                match outcome {
+                    ChannelsFileLoadOutcome::Loaded(load) => {
+                        self.channels.file = Some(load.file);
+                        self.channels.backup_path = load.backup_path;
+                        self.channels.error = None;
+                    }
+                    // Missing file is the empty state — let the user
+                    // create one by adding their first channel.
+                    ChannelsFileLoadOutcome::Missing => {
+                        self.channels.file = None;
+                        self.channels.backup_path = None;
+                        self.channels.error = None;
+                    }
+                    ChannelsFileLoadOutcome::Failed(e) => {
+                        self.channels.file = None;
+                        self.channels.backup_path = None;
+                        self.channels.error = Some(e);
+                    }
                 }
                 Task::none()
             }
@@ -1107,7 +942,10 @@ impl App {
                     return Task::none();
                 }
                 self.channels.discover_packages_loading = true;
-                let client = self.ensure_discovery();
+                let Some(client) = self.ensure_discovery() else {
+                    self.channels.discover_packages_loading = false;
+                    return Task::none();
+                };
                 Task::perform(
                     async move {
                         client
@@ -1645,12 +1483,7 @@ impl App {
         }
         self.channels.installed_by_channel_loading = true;
         Task::perform(
-            async move {
-                g.package()
-                    .installed_by_channel()
-                    .await
-                    .map_err(|e| format!("{e}"))
-            },
+            async move { g.installed().by_channel().await.map_err(|e| format!("{e}")) },
             Message::ChannelsInstalledByChannelLoaded,
         )
     }
@@ -1693,7 +1526,7 @@ impl App {
                 // Re-read so we get the canonical parsed view (the new
                 // source is what we just wrote, but rereading also picks
                 // up any normalisation the pretty-printer applied).
-                load_channels_file(path_override).await
+                outcome_to_result(load_channels_file(path_override).await)
             },
             Message::ChannelsApplyCompleted,
         )
@@ -1736,7 +1569,7 @@ impl App {
                 .await
                 .map_err(|e| format!("restore task panicked: {e}"))?
                 .map_err(|e| format!("restore failed: {e}"))?;
-                load_channels_file(path_override).await
+                outcome_to_result(load_channels_file(path_override).await)
             },
             Message::ChannelsRestoreCompleted,
         )
@@ -1746,19 +1579,35 @@ impl App {
     /// inside a Discover-sub-mode code path (guarded upstream by
     /// `settings.discovery_enabled`), so when the toggle is off this
     /// method is unreachable and no `Discovery` allocation happens.
-    fn ensure_discovery(&mut self) -> Discovery {
+    ///
+    /// Returns `None` when `reqwest::Client::builder()` fails — the
+    /// caller stashes the error in `discover_error` and the sub-mode
+    /// renders the failure inline. Previous behaviour silently fell
+    /// back to a default client without UA/timeout, which is the worst
+    /// possible outcome in a constrained sandbox.
+    fn ensure_discovery(&mut self) -> Option<Discovery> {
         if let Some(d) = self.channels.discovery.clone() {
-            return d;
+            return Some(d);
         }
-        let d = Discovery::new();
-        self.channels.discovery = Some(d.clone());
-        d
+        match Discovery::new() {
+            Ok(d) => {
+                self.channels.discovery = Some(d.clone());
+                Some(d)
+            }
+            Err(e) => {
+                self.channels.discover_error = Some(format!("discovery client failed: {e}"));
+                None
+            }
+        }
     }
 
     fn spawn_discover_channels_fetch(&mut self) -> Task<Message> {
         self.channels.discover_channels_loading = true;
         self.channels.discover_error = None;
-        let client = self.ensure_discovery();
+        let Some(client) = self.ensure_discovery() else {
+            self.channels.discover_channels_loading = false;
+            return Task::none();
+        };
         Task::perform(
             async move {
                 client
@@ -2133,29 +1982,6 @@ pub fn should_render_remove_warning(
         return false;
     };
     map.get(channel_name).is_some_and(|v| !v.is_empty())
-}
-
-/// Maps a `ChannelsError` to a human-readable string for the GUI. We
-/// flatten to `String` early so the message types stay simple and the
-/// `Display` impl on `ChannelsError` (which already carries line/column
-/// when available, per the Phase 1 limitation) is the single source of
-/// truth for what the user sees.
-fn describe_channels_error(e: &ChannelsError) -> String {
-    e.to_string()
-}
-
-/// Reads the channels file and probes the `.bak` sibling in the same
-/// async task so the view never `stat`s from `view()`.
-async fn load_channels_file(path_override: Option<PathBuf>) -> Result<ChannelsFileLoad, String> {
-    let file = ChannelsFile::read(path_override.as_deref())
-        .await
-        .map_err(|e| describe_channels_error(&e))?;
-    let bak = file.backup_path();
-    let backup_path = match tokio::fs::metadata(&bak).await {
-        Ok(_) => Some(bak),
-        Err(_) => None,
-    };
-    Ok(ChannelsFileLoad { file, backup_path })
 }
 
 const SEARCH_ERROR_SUMMARY_CAP: usize = 200;

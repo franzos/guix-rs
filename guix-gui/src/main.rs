@@ -3,6 +3,7 @@
 mod app;
 mod app_metadata;
 mod carrier;
+mod channels;
 mod operation_subscription;
 mod progress_summary;
 mod recommended;
