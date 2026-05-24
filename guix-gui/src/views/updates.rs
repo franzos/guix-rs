@@ -4,9 +4,9 @@
 use std::path::Path;
 
 use iced::widget::{button, column, container, row, text, tooltip, Column};
-use iced::{Element, Length};
+use iced::{Element, Font, Length};
 
-use crate::app::{App, Message};
+use crate::app::{App, Message, PendingReconfigure};
 use crate::settings::Tab;
 use crate::styles::{self, BOLD, MUTED};
 use crate::util::{humanize_age, short_hash};
@@ -92,29 +92,84 @@ fn system_section<'a>(app: &'a App, source: Option<&'a Path>, busy: bool) -> Ele
         false,
     );
 
-    let apply_on_press: Option<Message> = if source.is_some() && !busy {
-        Some(Message::ReconfigureClicked)
+    let action_area: Element<'a, Message> =
+        if let Some(pending) = app.system.pending_reconfigure.as_ref() {
+            confirm_reconfigure_card(pending).into()
+        } else {
+            let apply_on_press: Option<Message> = if source.is_some() && !busy {
+                Some(Message::ReconfigureClicked)
+            } else {
+                None
+            };
+            let apply_inner = button(text("Update system").size(13))
+                .padding([8, 16])
+                .style(styles::btn_primary)
+                .on_press_maybe(apply_on_press);
+            let apply_btn: Element<'a, Message> = tooltip(
+                apply_inner,
+                container(text("pkexec guix system reconfigure"))
+                    .padding(6)
+                    .style(styles::card_flat),
+                tooltip::Position::Top,
+            )
+            .into();
+            row![fetch_btn, apply_btn].spacing(8).into()
+        };
+
+    let body = column![blurb, summary, source_row, action_area].spacing(10);
+    section_card("System", body.into())
+}
+
+/// Confirmation card for `pkexec guix system reconfigure`. Lists the
+/// config and every `-L` load path so the user authorises each
+/// root-loaded module path explicitly.
+fn confirm_reconfigure_card<'a>(pending: &'a PendingReconfigure) -> Column<'a, Message> {
+    let header = text("Confirm system reconfigure").size(14).font(BOLD);
+    let blurb = text(
+        "Running as root via pkexec. Verify the paths below — each will \
+         be loaded by Guile with root privileges.",
+    )
+    .size(12)
+    .color(MUTED);
+
+    let cfg_label = text("Config:").size(12).color(MUTED);
+    let cfg_value = text(pending.config_path.display().to_string())
+        .size(12)
+        .font(Font::MONOSPACE);
+
+    let mut col: Column<'a, Message> = column![header, blurb, cfg_label, cfg_value].spacing(6);
+
+    let lp_label = if pending.load_paths.is_empty() {
+        text("Load paths (-L): (none)").size(12).color(MUTED)
     } else {
-        None
+        text(format!(
+            "Load paths (-L), {} entr{}:",
+            pending.load_paths.len(),
+            if pending.load_paths.len() == 1 {
+                "y"
+            } else {
+                "ies"
+            }
+        ))
+        .size(12)
+        .color(MUTED)
     };
-    let apply_inner = button(text("Update system").size(13))
+    col = col.push(lp_label);
+    for p in &pending.load_paths {
+        col = col.push(text(p.display().to_string()).size(12).font(Font::MONOSPACE));
+    }
+
+    let confirm = button(text("Confirm reconfigure").size(13))
         .padding([8, 16])
         .style(styles::btn_primary)
-        .on_press_maybe(apply_on_press);
-    let apply_btn: Element<'a, Message> = tooltip(
-        apply_inner,
-        container(text("pkexec guix system reconfigure"))
-            .padding(6)
-            .style(styles::card_flat),
-        tooltip::Position::Top,
-    )
-    .into();
+        .on_press(Message::ReconfigureConfirmed);
+    let cancel = button(text("Cancel").size(13))
+        .padding([8, 16])
+        .style(styles::btn_ghost)
+        .on_press(Message::ReconfigureCancelled);
+    col = col.push(row![confirm, cancel].spacing(8));
 
-    let actions = row![fetch_btn, apply_btn].spacing(8);
-
-    let _ = app;
-    let body = column![blurb, summary, source_row, actions].spacing(10);
-    section_card("System", body.into())
+    col
 }
 
 fn section_card<'a>(header_label: &'a str, body: Element<'a, Message>) -> Element<'a, Message> {

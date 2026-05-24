@@ -54,7 +54,7 @@ impl InstalledOps {
     /// callers should cache.
     pub async fn by_channel(&self) -> Result<HashMap<String, Vec<InstalledPackage>>, GuixError> {
         let repl = self.guix.repl().await?;
-        let profile = resolve_profile_path();
+        let profile = resolve_profile_path()?;
         let profile_str = profile.to_string_lossy().into_owned();
 
         let escaped = scheme_string(&profile_str);
@@ -103,14 +103,13 @@ fn interpret_response(value: lexpr::Value) -> Result<Vec<InstalledEntry>, GuixEr
 /// profile. We don't validate existence here — the Scheme helper
 /// returns an empty list on any failure, which is the right shape for
 /// "not introspectable".
-fn resolve_profile_path() -> PathBuf {
+fn resolve_profile_path() -> Result<PathBuf, GuixError> {
     if let Some(p) = std::env::var_os("GUIX_PROFILE") {
-        return PathBuf::from(p);
+        return Ok(PathBuf::from(p));
     }
     let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"));
-    home.join(".guix-profile")
+        .ok_or_else(|| GuixError::Internal("HOME not set; cannot resolve profile path".into()))?;
+    Ok(PathBuf::from(home).join(".guix-profile"))
 }
 
 #[derive(Debug, PartialEq, Eq)]

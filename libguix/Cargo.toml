@@ -27,12 +27,12 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "io
 tokio-stream = { version = "0.1", features = ["sync"] }
 futures-core = "0.3"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
-nix = { version = "0.31", features = ["signal"] }
+nix = { version = "0.31", features = ["signal", "fs", "process"] }
 libc = "0.2"
 lexpr = "0.2"
+tempfile = "3"
 tracing = { version = "0.1", default-features = false, features = ["std"], optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util", "io-util", "sync", "time"] }
 tokio-test = "0.4"
-tempfile = "3"

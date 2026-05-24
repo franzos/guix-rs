@@ -157,16 +157,30 @@ struct DebianScreenshot {
 // --- Client --------------------------------------------------------------
 
 impl MetadataClient {
-    pub fn new() -> Self {
+    /// Returns `Err` so the caller decides how to surface a builder
+    /// failure — silently falling back to `Client::new()` drops the
+    /// user-agent and timeout, which matters most in a constrained sandbox.
+    pub fn new() -> Result<Self, reqwest::Error> {
         let http = reqwest::Client::builder()
             .user_agent(USER_AGENT)
             .timeout(HTTP_TIMEOUT)
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            .build()?;
+        let cache_root =
+            directories::ProjectDirs::from("", "", "guix-gui").map(|d| d.cache_dir().to_path_buf());
+        Ok(Self {
+            http,
+            flathub_index: Arc::new(RwLock::new(None)),
+            cache_root,
+        })
+    }
+
+    /// Fallback when `Client::builder()` fails on startup — default
+    /// reqwest client, no custom UA or timeout, so the GUI still launches.
+    pub fn degraded() -> Self {
         let cache_root =
             directories::ProjectDirs::from("", "", "guix-gui").map(|d| d.cache_dir().to_path_buf());
         Self {
-            http,
+            http: reqwest::Client::new(),
             flathub_index: Arc::new(RwLock::new(None)),
             cache_root,
         }
@@ -228,16 +242,24 @@ impl MetadataClient {
         }
     }
 
-    /// Guix package names are mostly `[a-z0-9-+.]`, but a few use `@`,
-    /// `+`, or `_`. Map anything outside the safe filename alphabet to
-    /// `_` so the on-disk key stays valid on any sane filesystem.
+    /// Map anything outside `[A-Za-z0-9-]` to `_` so the on-disk key
+    /// is filesystem-safe and can never be `.`, `..`, or a dotfile.
+    /// Capped to 128 chars.
     fn safe_name(s: &str) -> String {
-        s.chars()
+        let mut out: String = s
+            .chars()
             .map(|c| match c {
-                'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '.' => c,
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '-' => c,
                 _ => '_',
             })
-            .collect()
+            .collect();
+        if out.len() > 128 {
+            out.truncate(128);
+        }
+        if out.is_empty() {
+            out.push('_');
+        }
+        out
     }
 
     /// 64-bit non-crypto hash of the URL — collisions among the few
@@ -255,9 +277,14 @@ impl MetadataClient {
     async fn fetch_bytes_cached(&self, url: &str) -> Option<Vec<u8>> {
         let key = Self::url_key(url);
         if let Some(bytes) = self.read_cache(BYTES_SUBDIR, &key).await {
-            return Some(bytes);
+            if is_supported_image(&bytes) {
+                return Some(bytes);
+            }
         }
         let bytes = self.fetch_bytes(url).await?;
+        if !is_supported_image(&bytes) {
+            return None;
+        }
         self.write_cache(BYTES_SUBDIR, &key, &bytes).await;
         Some(bytes)
     }
@@ -300,7 +327,9 @@ impl MetadataClient {
     pub async fn fetch_icon(&self, guix_name: &str) -> Option<Vec<u8>> {
         let key = Self::safe_name(guix_name);
         if let Some(bytes) = self.read_cache(ICONS_BY_NAME_SUBDIR, &key).await {
-            return Some(bytes);
+            if is_supported_image(&bytes) {
+                return Some(bytes);
+            }
         }
         let id = self.flathub_lookup(guix_name).await?;
         let url = format!("{FLATHUB_API}/appstream/{id}");
@@ -317,6 +346,9 @@ impl MetadataClient {
             .ok()?;
         let icon_url = resp.icon?;
         let bytes = self.fetch_bytes(&icon_url).await?;
+        if !is_supported_image(&bytes) {
+            return None;
+        }
         self.write_cache(ICONS_BY_NAME_SUBDIR, &key, &bytes).await;
         Some(bytes)
     }
@@ -445,15 +477,39 @@ impl MetadataClient {
     }
 }
 
-impl Default for MetadataClient {
-    fn default() -> Self {
-        Self::new()
+/// Magic-byte sniff for formats `iced::widget::image` accepts: PNG,
+/// JPEG, WebP. Rejects everything else so the lightbox never decodes
+/// untrusted bytes from a hostile or buggy upstream.
+pub fn is_supported_image(bytes: &[u8]) -> bool {
+    const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
+    const JPEG: &[u8] = &[0xff, 0xd8, 0xff];
+    if bytes.starts_with(PNG) {
+        return true;
     }
+    if bytes.starts_with(JPEG) {
+        return true;
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return true;
+    }
+    false
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn is_supported_image_accepts_known_magic_and_rejects_others() {
+        let png: &[u8] = b"\x89PNG\r\n\x1a\nrest";
+        assert!(is_supported_image(png));
+
+        assert!(!is_supported_image(b"plain text"));
+
+        let mut truncated_webp = Vec::from(*b"RIFF\x00\x00\x00\x00WE");
+        truncated_webp.truncate(10);
+        assert!(!is_supported_image(&truncated_webp));
+    }
 
     #[test]
     fn index_finds_single_match() {
@@ -493,13 +549,29 @@ mod tests {
 
     #[test]
     fn safe_name_strips_unsafe_chars() {
-        // Guix names with `@`, `+`, `_`, `/` etc. shouldn't be allowed
-        // to escape the icons-by-name dir or break on weird filesystems.
+        // Guix names with `@`, `+`, `_`, `/`, `.` etc. shouldn't be
+        // allowed to escape the icons-by-name dir, produce traversal
+        // sequences, or break on weird filesystems.
         assert_eq!(MetadataClient::safe_name("gimp"), "gimp");
         assert_eq!(MetadataClient::safe_name("0ad"), "0ad");
-        assert_eq!(MetadataClient::safe_name("python@3.9"), "python_3.9");
+        assert_eq!(MetadataClient::safe_name("python@3.9"), "python_3_9");
         assert_eq!(MetadataClient::safe_name("clang++"), "clang__");
-        assert_eq!(MetadataClient::safe_name("../etc/passwd"), ".._etc_passwd");
+        assert_eq!(MetadataClient::safe_name("../etc/passwd"), "___etc_passwd");
+    }
+
+    #[test]
+    fn safe_name_rejects_traversal_and_hidden() {
+        assert_eq!(MetadataClient::safe_name(".."), "__");
+        assert_eq!(MetadataClient::safe_name("."), "_");
+        assert_eq!(MetadataClient::safe_name(".hidden"), "_hidden");
+        // Empty input must still yield a valid (non-empty) filename.
+        assert_eq!(MetadataClient::safe_name(""), "_");
+    }
+
+    #[test]
+    fn safe_name_caps_length() {
+        let huge = "a".repeat(500);
+        assert_eq!(MetadataClient::safe_name(&huge).len(), 128);
     }
 
     #[test]
@@ -518,7 +590,7 @@ mod tests {
     #[tokio::test]
     async fn cache_roundtrip_and_expiry() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let mut client = MetadataClient::new();
+        let mut client = MetadataClient::new().expect("client");
         client.cache_root = Some(tmp.path().to_path_buf());
 
         assert!(client.read_cache("icons-by-name", "gimp").await.is_none());
@@ -550,7 +622,7 @@ mod tests {
     #[tokio::test]
     async fn clear_disk_cache_on_empty_root_is_ok() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let mut client = MetadataClient::new();
+        let mut client = MetadataClient::new().expect("client");
         client.cache_root = Some(tmp.path().to_path_buf());
         client.clear_disk_cache().await.expect("ok on empty root");
     }
@@ -559,7 +631,7 @@ mod tests {
     #[tokio::test]
     async fn clear_disk_cache_drops_entries() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let mut client = MetadataClient::new();
+        let mut client = MetadataClient::new().expect("client");
         client.cache_root = Some(tmp.path().to_path_buf());
         client.write_cache("bytes", "abc", b"x").await;
         assert!(client.read_cache("bytes", "abc").await.is_some());

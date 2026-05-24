@@ -5,7 +5,7 @@
 //! accumulates for [`COALESCE_WINDOW`] or [`COALESCE_MAX_EVENTS`].
 //! Final event of every stream is [`ProgressEvent::ExitSummary`].
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use std::pin::Pin;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex as StdMutex};
@@ -45,7 +45,7 @@ pub struct Operation {
     pub(crate) cancel: Option<CancelHandle>,
     pub(crate) guard: DropGuard,
     classifier: ExitClassifier,
-    known_bugs: Arc<StdMutex<HashSet<KnownBug>>>,
+    known_bugs: Arc<StdMutex<BTreeSet<KnownBug>>>,
 }
 
 impl Operation {
@@ -93,7 +93,10 @@ impl Operation {
     }
 
     fn first_known_bug(&self) -> Option<KnownBug> {
-        let set = self.known_bugs.lock().ok()?;
+        let set = self
+            .known_bugs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         set.iter().copied().next()
     }
 }
@@ -129,7 +132,10 @@ pub(crate) struct DropGuard {
 
 impl DropGuard {
     fn stderr_snapshot(&self) -> String {
-        let ring = self.stderr_ring.lock().expect("stderr ring poisoned");
+        let ring = self
+            .stderr_ring
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         ring.snapshot()
     }
 }
@@ -196,7 +202,7 @@ pub(crate) fn assemble_operation_from_event_rx(
     child: Child,
     event_rx: mpsc::Receiver<ProgressEvent>,
     stderr_ring: Arc<StdMutex<StderrRing>>,
-    known_bugs: Arc<StdMutex<HashSet<KnownBug>>>,
+    known_bugs: Arc<StdMutex<BTreeSet<KnownBug>>>,
     classifier: ExitClassifier,
     started: Instant,
 ) -> Operation {
@@ -257,7 +263,7 @@ pub(crate) fn spawn_operation_with(
     let (batch_tx, batch_rx) = mpsc::channel::<Vec<ProgressEvent>>(32);
 
     let stderr_ring = Arc::new(StdMutex::new(StderrRing::new()));
-    let known_bugs: Arc<StdMutex<HashSet<KnownBug>>> = Arc::new(StdMutex::new(HashSet::new()));
+    let known_bugs: Arc<StdMutex<BTreeSet<KnownBug>>> = Arc::new(StdMutex::new(BTreeSet::new()));
 
     spawn_reader(
         stdout,
@@ -355,7 +361,7 @@ fn spawn_reader<R>(
     stream: ProgressStream,
     tx: mpsc::Sender<ProgressEvent>,
     stderr_ring: Option<Arc<StdMutex<StderrRing>>>,
-    known_bugs: Arc<StdMutex<HashSet<KnownBug>>>,
+    known_bugs: Arc<StdMutex<BTreeSet<KnownBug>>>,
 ) where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
 {

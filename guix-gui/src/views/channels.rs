@@ -6,7 +6,7 @@
 //! `views/installed.rs`), and an inline "Add channel" form.
 
 use iced::widget::{button, column, container, row, scrollable, text, text_input, Column, Space};
-use iced::{Element, Length};
+use iced::{Element, Font, Length};
 use libguix::Channel;
 
 use crate::app::{should_render_remove_warning, App, Message};
@@ -1082,6 +1082,22 @@ fn confirm_add_card<'a>(app: &'a App, ch: &'a Channel) -> Element<'a, Message> {
         .into()
     };
 
+    // Monospace so the user can eyeball commit/fingerprint values.
+    let mono_line = |label: &str, value: &str| -> Element<'_, Message> {
+        row![
+            text(label.to_string())
+                .size(12)
+                .color(MUTED)
+                .width(Length::Fixed(140.0)),
+            text(value.to_string())
+                .size(12)
+                .font(Font::MONOSPACE)
+                .width(Length::Fill),
+        ]
+        .spacing(8)
+        .into()
+    };
+
     let mut details: Column<'_, Message> = Column::new().spacing(2);
     details = details.push(line("name", &ch.name));
     details = details.push(line("url", &ch.url));
@@ -1089,13 +1105,13 @@ fn confirm_add_card<'a>(app: &'a App, ch: &'a Channel) -> Element<'a, Message> {
         details = details.push(line("branch", b));
     }
     if let Some(c) = &ch.commit {
-        details = details.push(line("commit", c));
+        details = details.push(mono_line("commit", c));
     }
     if let Some(c) = &ch.introduction_commit {
-        details = details.push(line("intro commit", c));
+        details = details.push(mono_line("intro commit", c));
     }
     if let Some(fpr) = &ch.introduction_fingerprint {
-        details = details.push(line("intro fingerprint", fpr));
+        details = details.push(mono_line("intro fingerprint", fpr));
     }
 
     let confirm_tooltip = if !writable {
@@ -1119,6 +1135,24 @@ fn confirm_add_card<'a>(app: &'a App, ch: &'a Channel) -> Element<'a, Message> {
         actions = actions.push(text(confirm_tooltip).size(11).color(MUTED));
     }
 
+    // Surface the catalog the intro values came from — they decide
+    // what `guix pull` trusts going forward.
+    let provenance = column![
+        text("Provenance").size(12).color(MUTED),
+        text(format!("Supplied by {}", guix_gui::discovery::TOYS_API))
+            .size(12)
+            .font(Font::MONOSPACE),
+    ]
+    .spacing(2);
+
+    let trust_warning = text(
+        "Once added, every `guix pull` runs Guile code from this source as you. \
+         Verify the introduction commit and fingerprint below against the \
+         channel's own published values before adding.",
+    )
+    .size(12)
+    .color(styles::WARNING);
+
     let body = column![
         text("Confirm channel add").size(14).font(BOLD),
         text(
@@ -1127,6 +1161,10 @@ fn confirm_add_card<'a>(app: &'a App, ch: &'a Channel) -> Element<'a, Message> {
         )
         .size(12)
         .color(MUTED),
+        Space::new().height(6),
+        provenance,
+        Space::new().height(4),
+        trust_warning,
         Space::new().height(6),
         details,
         Space::new().height(6),

@@ -172,6 +172,16 @@ pub struct SystemState {
     /// Buffered input for the channels source-path override; mirrors
     /// `source_input` for the `config.scm` override.
     pub channels_source_input: String,
+    /// Snapshot captured on the first "Update system" click and shown
+    /// in the confirm card, so a settings change between click and
+    /// confirm can't mutate what `pkexec` actually runs.
+    pub pending_reconfigure: Option<PendingReconfigure>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingReconfigure {
+    pub config_path: PathBuf,
+    pub load_paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -200,6 +210,8 @@ pub enum Message {
     FetchSystemCatalogClicked,
     UpgradeClicked,
     ReconfigureClicked,
+    ReconfigureConfirmed,
+    ReconfigureCancelled,
 
     SystemConfigChecked(Result<String, String>),
     SourceConfigChanged(String),
@@ -357,7 +369,13 @@ impl App {
             channels: ChannelsState::default(),
             warmup_done: false,
             theme,
-            metadata_client: MetadataClient::new(),
+            metadata_client: MetadataClient::new().unwrap_or_else(|e| {
+                tracing::warn!(
+                    target: "guix_gui",
+                    "metadata client build failed ({e}); falling back to degraded client"
+                );
+                MetadataClient::degraded()
+            }),
             metadata_cache: HashMap::new(),
             lightbox: None,
             home_icons: HashMap::new(),
@@ -617,17 +635,33 @@ impl App {
                 self.start_op(OpKind::Upgrade, |g| g.package().upgrade(None))
             }
             Message::ReconfigureClicked => {
-                let path: Option<PathBuf> = self.settings.source_config_path.clone();
-                let Some(path) = path else {
+                let Some(path) = self.settings.source_config_path.clone() else {
                     self.system.validation_message =
                         Some("Set the source config path on the System tab first.".into());
                     self.active_tab = Tab::System;
                     return Task::none();
                 };
-                let load_paths = self.settings.effective_load_paths();
+                self.system.pending_reconfigure = Some(PendingReconfigure {
+                    config_path: path,
+                    load_paths: self.settings.effective_load_paths(),
+                });
+                Task::none()
+            }
+            Message::ReconfigureCancelled => {
+                self.system.pending_reconfigure = None;
+                Task::none()
+            }
+            Message::ReconfigureConfirmed => {
+                let Some(pending) = self.system.pending_reconfigure.take() else {
+                    return Task::none();
+                };
+                let PendingReconfigure {
+                    config_path,
+                    load_paths,
+                } = pending;
                 self.start_op(OpKind::Reconfigure, move |g| {
                     g.system().reconfigure(
-                        &path,
+                        &config_path,
                         ReconfigureOptions {
                             load_paths,
                             ..Default::default()
@@ -1070,7 +1104,13 @@ impl App {
                 // index — otherwise the next fetch would skip the
                 // network and miss the chance to pick up a refreshed ID
                 // list. New() is cheap; just rebuilds the reqwest pool.
-                let new_client = MetadataClient::new();
+                let new_client = MetadataClient::new().unwrap_or_else(|e| {
+                    tracing::warn!(
+                        target: "guix_gui",
+                        "metadata client rebuild failed ({e}); keeping degraded client"
+                    );
+                    MetadataClient::degraded()
+                });
                 let to_clear = self.metadata_client.clone();
                 self.metadata_client = new_client;
                 Task::perform(
@@ -1135,17 +1175,29 @@ impl App {
                 Task::none()
             }
             Message::OpenUrl(url) => {
-                // Reject anything that isn't http(s) — defence in depth
-                // so a malicious package homepage can't smuggle a shell
-                // command past xdg-open's URL handler.
-                if !(url.starts_with("http://") || url.starts_with("https://")) {
-                    tracing::warn!(target: "guix_gui", "refusing to open non-http url: {url}");
+                // Parse via `url::Url` so we hand xdg-open a canonical
+                // string. Reject non-http(s) schemes and any control
+                // bytes that slipped through the package homepage field.
+                let parsed = match ::url::Url::parse(&url) {
+                    Ok(u) => u,
+                    Err(e) => {
+                        tracing::warn!(target: "guix_gui", "refusing unparseable url ({e}): {url}");
+                        return Task::none();
+                    }
+                };
+                if !matches!(parsed.scheme(), "http" | "https") {
+                    tracing::warn!(target: "guix_gui", "refusing non-http url: {url}");
                     return Task::none();
                 }
-                // `spawn()` only fork+execs the helper — it doesn't
-                // wait for the browser — so a plain blocking call is
-                // already non-blocking from our perspective.
-                if let Err(e) = std::process::Command::new("xdg-open").arg(&url).spawn() {
+                let canonical = parsed.as_str();
+                if canonical.bytes().any(|b| b < 0x20 || b == 0x7f) {
+                    tracing::warn!(target: "guix_gui", "refusing url with control bytes: {url}");
+                    return Task::none();
+                }
+                if let Err(e) = std::process::Command::new("xdg-open")
+                    .arg(canonical)
+                    .spawn()
+                {
                     tracing::warn!(target: "guix_gui", "xdg-open failed: {e}");
                 }
                 Task::none()
@@ -1745,6 +1797,23 @@ impl App {
 
     fn view_lightbox<'a>(&'a self, bytes: &'a [u8]) -> Element<'a, Message> {
         use iced::widget::image as iced_image;
+        if !crate::app_metadata::is_supported_image(bytes) {
+            let close_btn = button(text("Close (Esc)").size(13))
+                .padding([8, 16])
+                .style(styles::btn_secondary)
+                .on_press(Message::LightboxClosed);
+            let header = row![Space::new().width(Length::Fill), close_btn].padding(12);
+            let msg = container(text("no image / failed").size(14))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center_x(Length::Fill)
+                .center_y(Length::Fill);
+            return container(column![header, msg].spacing(0))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(styles::card)
+                .into();
+        }
         let handle = iced_image::Handle::from_bytes(bytes.to_vec());
         let img = iced_image(handle)
             .width(Length::Fill)

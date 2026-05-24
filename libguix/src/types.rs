@@ -60,7 +60,7 @@ pub enum ProgressStream {
     Stderr,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum KnownBug {
     /// <https://issues.guix.gnu.org/74396>.
     ChannelShadow74396,

@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.1.5] - 2026-05-24
+
+### Added
+- Confirmation step before `pkexec guix system reconfigure` — shows the exact config path and every `-L` load path being authorised
+- Channel field validation (URL scheme/length, control & deceptive Unicode, branch chars, intro commit/fingerprint shape)
+- Provenance label and trust warning in the channel-add confirm card
+- Corrupt-settings JSON is copied to a `.bak` sibling on load (existing `.bak` preserved)
+- Image magic-byte sniff (PNG/JPEG/WebP) — lightbox and disk cache reject unsupported bytes
+
+### Changed
+- `channels.scm` atomic write now refuses symlinks and uses a random-named tempfile in the same dir
+- `discovery` HTTP client is `https_only` with a 2-hop redirect cap
+- REPL timeout sends SIGINT and waits briefly for the reply to drain so the next request doesn't queue behind a dead slot
+- REPL fd-3 pipe handling switched to RAII (`OwnedFd`), removing manual `close` and a fork-race window
+- `xdg-open` invocation parses + canonicalises URLs via `url::Url` and rejects control bytes
+
+### Fixed
+- `MetadataClient` builder failure no longer silently drops user-agent and timeout — surfaces error and falls back to a labelled degraded client
+- `safe_name` for on-disk cache keys can no longer produce `.`, `..`, or dotfile names; length capped at 128
+- `resolve_profile_path` returns an error instead of defaulting to `/` when `HOME` is unset
+
 ## [0.1.4] - 2026-05-19
 
 ### Added

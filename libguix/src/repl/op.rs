@@ -3,7 +3,7 @@
 //! event s-expressions there. See NOTES.md.
 
 use std::io;
-use std::os::fd::{FromRawFd, IntoRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::Stdio;
@@ -21,7 +21,7 @@ use crate::operation::{
 use crate::types::{KnownBug, ProgressEvent, ProgressStream};
 
 pub(crate) fn spawn_repl_op(binary: &Path, scheme_payload: &str) -> Result<Operation, GuixError> {
-    let (read_fd, write_fd) = make_pipe()?;
+    let (read_owned, write_owned) = make_pipe()?;
 
     let mut cmd = Command::new(binary);
     cmd.arg("repl")
@@ -34,14 +34,10 @@ pub(crate) fn spawn_repl_op(binary: &Path, scheme_payload: &str) -> Result<Opera
         .stderr(Stdio::piped())
         .kill_on_drop(true);
 
-    // pre_exec is async-signal-safe: dup2 + close only.
-    let write_fd_raw: RawFd = write_fd.into_raw_fd();
+    let write_fd_raw = write_owned.as_raw_fd();
     unsafe {
         cmd.as_std_mut().pre_exec(move || {
             if libc::dup2(write_fd_raw, 3) == -1 {
-                return Err(io::Error::last_os_error());
-            }
-            if libc::close(write_fd_raw) == -1 {
                 return Err(io::Error::last_os_error());
             }
             Ok(())
@@ -49,17 +45,12 @@ pub(crate) fn spawn_repl_op(binary: &Path, scheme_payload: &str) -> Result<Opera
     }
 
     let started = Instant::now();
-    let mut child: Child = cmd.spawn().map_err(|e| {
-        // SAFETY: spawn failed before fork — write_fd_raw is unaliased.
-        drop(read_fd_to_owned(read_fd));
-        unsafe { libc::close(write_fd_raw) };
-        GuixError::Spawn(e)
-    })?;
+    let mut child: Child = cmd.spawn().map_err(GuixError::Spawn)?;
 
-    // Parent must drop its copy or fd-3 reader never sees EOF on child exit.
-    unsafe { libc::close(write_fd_raw) };
+    // Parent drops its copy — without this, the fd-3 reader never sees
+    // EOF on child exit. RAII: dropping `write_owned` closes it.
+    drop(write_owned);
 
-    let read_owned = read_fd_to_owned(read_fd);
     let events_read =
         tokio::net::unix::pipe::Receiver::from_owned_fd(read_owned).map_err(GuixError::Spawn)?;
 
@@ -77,7 +68,7 @@ pub(crate) fn spawn_repl_op(binary: &Path, scheme_payload: &str) -> Result<Opera
     let (event_tx, event_rx) = mpsc::channel::<ProgressEvent>(1024);
 
     let stderr_ring = new_stderr_ring();
-    let known_bugs = Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+    let known_bugs = Arc::new(std::sync::Mutex::new(std::collections::BTreeSet::new()));
 
     spawn_event_reader(events_read, event_tx.clone());
 
@@ -224,36 +215,17 @@ fn scheme_string_literal(s: &str) -> String {
 }
 
 /// Read end keeps `FD_CLOEXEC`; write end clears it so the dup2-target survives exec.
-fn make_pipe() -> Result<(RawFd, OwnedFd), GuixError> {
-    let mut fds: [libc::c_int; 2] = [0; 2];
-    let rc = unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) };
-    if rc != 0 {
-        return Err(GuixError::Spawn(io::Error::last_os_error()));
-    }
-    let read_fd = fds[0];
-    let write_fd = fds[1];
-    let flags = unsafe { libc::fcntl(write_fd, libc::F_GETFD) };
-    if flags == -1 {
-        unsafe {
-            libc::close(read_fd);
-            libc::close(write_fd);
-        }
-        return Err(GuixError::Spawn(io::Error::last_os_error()));
-    }
-    let rc = unsafe { libc::fcntl(write_fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) };
-    if rc == -1 {
-        unsafe {
-            libc::close(read_fd);
-            libc::close(write_fd);
-        }
-        return Err(GuixError::Spawn(io::Error::last_os_error()));
-    }
-    let write_owned = unsafe { OwnedFd::from_raw_fd(write_fd) };
-    Ok((read_fd, write_owned))
-}
-
-fn read_fd_to_owned(fd: RawFd) -> OwnedFd {
-    unsafe { OwnedFd::from_raw_fd(fd) }
+fn make_pipe() -> Result<(OwnedFd, OwnedFd), GuixError> {
+    use nix::fcntl::{fcntl, FcntlArg, FdFlag, OFlag};
+    let (read_owned, write_owned) = nix::unistd::pipe2(OFlag::O_CLOEXEC)
+        .map_err(|e| GuixError::Spawn(io::Error::from_raw_os_error(e as i32)))?;
+    let cur = fcntl(&write_owned, FcntlArg::F_GETFD)
+        .map_err(|e| GuixError::Spawn(io::Error::from_raw_os_error(e as i32)))?;
+    let mut flags = FdFlag::from_bits_truncate(cur);
+    flags.remove(FdFlag::FD_CLOEXEC);
+    fcntl(&write_owned, FcntlArg::F_SETFD(flags))
+        .map_err(|e| GuixError::Spawn(io::Error::from_raw_os_error(e as i32)))?;
+    Ok((read_owned, write_owned))
 }
 
 fn spawn_event_reader(read: tokio::net::unix::pipe::Receiver, tx: mpsc::Sender<ProgressEvent>) {

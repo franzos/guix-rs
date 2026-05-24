@@ -88,12 +88,34 @@ impl Settings {
         ProjectDirs::from("", "", "guix-gui").map(|d| d.config_dir().join("config.json"))
     }
 
-    /// Corrupt JSON degrades silently to defaults so a bad config can't wedge the GUI.
+    /// Corrupt JSON degrades to defaults so a bad config can't wedge
+    /// the GUI. The bad file is copied to a `.bak` sibling for
+    /// inspection; an existing `.bak` is never overwritten.
     pub fn load_from(path: &Path) -> Self {
         match fs::read_to_string(path) {
-            Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
+            Ok(s) if s.trim().is_empty() => Self::default(),
+            Ok(s) => match serde_json::from_str(&s) {
+                Ok(parsed) => parsed,
+                Err(_) => {
+                    tracing::warn!(
+                        target: "guix_gui",
+                        "settings parse failed for {}; using defaults",
+                        path.display()
+                    );
+                    save_corrupt_backup(path);
+                    Self::default()
+                }
+            },
             Err(e) if e.kind() == io::ErrorKind::NotFound => Self::default(),
-            Err(_) => Self::default(),
+            Err(_) => {
+                tracing::warn!(
+                    target: "guix_gui",
+                    "settings parse failed for {}; using defaults",
+                    path.display()
+                );
+                save_corrupt_backup(path);
+                Self::default()
+            }
         }
     }
 
@@ -137,6 +159,21 @@ impl Settings {
         }
         out
     }
+}
+
+/// Copy `path` to its `.bak` sibling, but never clobber an existing
+/// `.bak` — the first preserved corruption wins.
+fn save_corrupt_backup(path: &Path) {
+    let bak = path.with_extension("bak");
+    if bak.exists() {
+        tracing::warn!(
+            target: "guix_gui",
+            "settings backup already exists at {}; not overwriting",
+            bak.display()
+        );
+        return;
+    }
+    let _ = fs::copy(path, &bak);
 }
 
 pub const FIRST_RUN_CONFIG_CANDIDATES: &[&str] = &["/etc/config.scm", "/etc/system.scm"];
@@ -216,6 +253,33 @@ mod tests {
         fs::write(&path, "{ this is not valid json").unwrap();
         let s = Settings::load_from(&path);
         assert!(s.source_config_path.is_none());
+    }
+
+    #[test]
+    fn corrupt_file_creates_backup() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("config.json");
+        fs::write(&path, "{ broken").unwrap();
+        let _ = Settings::load_from(&path);
+        let bak = path.with_extension("bak");
+        assert!(bak.exists(), ".bak should exist after corrupt-JSON load");
+        let bak_contents = fs::read_to_string(&bak).unwrap();
+        assert_eq!(bak_contents, "{ broken");
+    }
+
+    #[test]
+    fn corrupt_file_preserves_existing_backup() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("config.json");
+        let bak = path.with_extension("bak");
+        fs::write(&bak, "good prior backup").unwrap();
+        fs::write(&path, "{ freshly broken").unwrap();
+        let _ = Settings::load_from(&path);
+        let bak_contents = fs::read_to_string(&bak).unwrap();
+        assert_eq!(
+            bak_contents, "good prior backup",
+            "existing .bak must not be overwritten by a fresh corruption"
+        );
     }
 
     #[test]

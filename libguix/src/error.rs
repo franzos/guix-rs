@@ -8,6 +8,9 @@ pub enum GuixError {
     #[error("failed to spawn guix subprocess: {0}")]
     Spawn(#[source] io::Error),
 
+    #[error("io error: {0}")]
+    Io(#[source] io::Error),
+
     #[error("guix exited with code {code}: {stderr}")]
     NonZeroExit { code: i32, stderr: String },
 
@@ -60,6 +63,9 @@ pub enum GuixError {
 
     #[error("not running on a Guix System (no /run/current-system/configuration.scm)")]
     NotOnGuixSystem,
+
+    #[error("internal: {0}")]
+    Internal(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,11 +85,5 @@ impl GuixError {
             message: message.into(),
             stderr_tail: String::new(),
         }
-    }
-}
-
-impl From<io::Error> for GuixError {
-    fn from(e: io::Error) -> Self {
-        GuixError::Spawn(e)
     }
 }

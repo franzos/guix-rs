@@ -20,6 +20,10 @@ use crate::{trace_debug, trace_warn};
 
 const STDERR_RING_BYTES: usize = 64 * 1024;
 
+/// Bounded wait for the SIGINT-induced reply so the in-flight slot
+/// drains before we return.
+const SIGINT_DRAIN_GRACE: Duration = Duration::from_secs(2);
+
 #[derive(Clone)]
 pub struct Repl {
     inner: Arc<Inner>,
@@ -252,13 +256,13 @@ impl Repl {
         if !self.inner.in_flight.load(Ordering::Acquire) {
             return Ok(());
         }
-        let rc = unsafe { libc::kill(self.inner.child_pid as libc::pid_t, libc::SIGINT) };
-        if rc == -1 {
-            return Err(GuixError::repl(format!(
-                "kill: {}",
-                std::io::Error::last_os_error()
-            )));
-        }
+        let pid = i32::try_from(self.inner.child_pid)
+            .map_err(|_| GuixError::repl(format!("invalid child pid {}", self.inner.child_pid)))?;
+        nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(pid),
+            nix::sys::signal::Signal::SIGINT,
+        )
+        .map_err(|e| GuixError::repl(format!("kill: {e}")))?;
         Ok(())
     }
 
@@ -351,16 +355,25 @@ impl Repl {
                 }
             })?;
 
-        let res = time::timeout(self.inner.timeout, rx).await;
+        // Pinned so we can await it again after a timeout-induced SIGINT.
+        let mut rx = Box::pin(rx);
+        let res = time::timeout(self.inner.timeout, &mut rx).await;
         match res {
             Ok(Ok(v)) => v,
             Ok(Err(_)) => Err(self.repl_err("repl actor dropped reply").await),
-            Err(_) => Err(self
-                .repl_err(format!(
-                    "repl did not respond within {}s",
-                    self.inner.timeout.as_secs_f64()
-                ))
-                .await),
+            Err(_) => {
+                // SIGINT the eval and wait briefly for the unwound
+                // reply — without this the next request queues behind a
+                // never-clearing in-flight slot and looks like a deadlock.
+                let _ = self.interrupt();
+                let _ = time::timeout(SIGINT_DRAIN_GRACE, &mut rx).await;
+                Err(self
+                    .repl_err(format!(
+                        "repl did not respond within {}s",
+                        self.inner.timeout.as_secs_f64()
+                    ))
+                    .await)
+            }
         }
     }
 
@@ -427,13 +440,57 @@ async fn handle_one(
     Err(err_with_tail("repl stdout closed mid-reply".into(), stderr_ring).await)
 }
 
+/// Linear scan that counts `(` and `)` outside string literals — a coarse
+/// sanity check for `wrap_expr` input. Tracks `\` escapes inside strings.
+fn scheme_parens_balanced(s: &str) -> bool {
+    let mut depth: i32 = 0;
+    let mut in_string = false;
+    let mut escape = false;
+    for c in s.chars() {
+        if in_string {
+            if escape {
+                escape = false;
+            } else if c == '\\' {
+                escape = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => in_string = true,
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    !in_string && depth == 0
+}
+
 /// Fresh-module isolation + per-eval exception handler + dynamic-wind
 /// flag toggle for SIGINT. See NOTES.md.
 ///
 /// Persistent mode targets `%libguix-rs-module` (allocated once at spawn)
 /// and skips the per-eval `make-module`, so definitions and `module-use!`
 /// imports survive across requests.
+///
+/// `form` is spliced in verbatim — callers must escape interpolated
+/// strings via `scheme_string`. Passing untrusted input here is a
+/// code-injection bug at the call site.
 fn wrap_expr(mode: EvalMode, modules: &[String], form: &str) -> String {
+    debug_assert!(
+        scheme_parens_balanced(form),
+        "wrap_expr: unbalanced parens in form: {form}"
+    );
+    if !scheme_parens_balanced(form) {
+        #[cfg(feature = "tracing")]
+        tracing::warn!(target: "libguix::repl", "wrap_expr: unbalanced parens in form (proceeding): {form}");
+    }
     let module_expr = match mode {
         EvalMode::Fresh => "(let ((mod (make-module))) (beautify-user-module! mod) mod)",
         EvalMode::Persistent => "%libguix-rs-module",

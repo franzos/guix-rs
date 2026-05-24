@@ -170,9 +170,14 @@ impl Discovery {
     /// drop the user-agent and timeout, which is the worst combination
     /// for a constrained sandbox.
     pub fn new() -> Result<Self, DiscoveryError> {
+        // https_only refuses any HTTP request, including a redirect that
+        // tries to downgrade an HTTPS response to HTTP. redirect cap is
+        // belt-and-braces against a runaway chain on a misconfigured host.
         let http = reqwest::Client::builder()
             .user_agent(USER_AGENT)
             .timeout(HTTP_TIMEOUT)
+            .https_only(true)
+            .redirect(reqwest::redirect::Policy::limited(2))
             .build()?;
         Ok(Self {
             http,

@@ -1417,7 +1417,7 @@ dependencies = [
 
 [[package]]
 name = "guix-gui"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "directories",
  "futures-util",
@@ -1431,6 +1431,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "url",
  "vt100",
 ]
 
@@ -2178,7 +2179,7 @@ dependencies = [
 
 [[package]]
 name = "libguix"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "futures-core",
  "futures-util",

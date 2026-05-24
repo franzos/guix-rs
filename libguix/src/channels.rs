@@ -53,6 +53,9 @@ pub enum ChannelsError {
     #[error("channel name `{name}` contains characters that aren't valid in a Scheme symbol")]
     InvalidName { name: String },
 
+    #[error("invalid {field}: {reason}")]
+    Invalid { field: String, reason: String },
+
     #[error("channels.scm not found at {path}")]
     FileNotFound { path: PathBuf },
 
@@ -192,6 +195,7 @@ impl ChannelsFile {
                         name: ch.name.clone(),
                     });
                 }
+                validate_channel_fields(ch)?;
                 if ch.introduction_commit.is_none() || ch.introduction_fingerprint.is_none() {
                     return Err(ChannelsError::MissingIntroduction {
                         name: ch.name.clone(),
@@ -222,9 +226,13 @@ impl ChannelsFile {
         }
     }
 
-    /// Atomic write — refuses store-managed paths. Writes `.tmp` +
-    /// fsync, copies the current file to `.bak`, then renames `.tmp`
-    /// over the target and fsyncs the parent.
+    /// Atomic write — refuses store-managed paths and symlinks. Writes a
+    /// random-named tempfile in the same dir, fsyncs it, copies the
+    /// current file to `.bak`, renames the tempfile over the target,
+    /// then fsyncs the parent.
+    ///
+    /// Symlinks at `path` are rejected so dotfile setups that pin
+    /// `channels.scm` from a config repo aren't silently broken.
     ///
     /// Each successful write overwrites the previous `.bak` — callers
     /// who need a session-pristine snapshot must capture it themselves.
@@ -238,31 +246,47 @@ impl ChannelsFile {
         let path = self.path.clone();
         let bak_path = self.backup_path();
         let content = content.to_owned();
-        tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+        tokio::task::spawn_blocking(move || -> Result<(), ChannelsError> {
             use std::fs;
             use std::io::Write as _;
 
-            let tmp_path = path.with_extension("scm.tmp");
+            // `symlink_metadata` doesn't follow the link; replacing a
+            // dotfiles-pinned `channels.scm` would silently break it.
+            match fs::symlink_metadata(&path) {
+                Ok(md) if md.file_type().is_symlink() => {
+                    return Err(ChannelsError::Invalid {
+                        field: "path".into(),
+                        reason: format!(
+                            "{} is a symlink; refusing to replace it. Resolve or remove the link first.",
+                            path.display()
+                        ),
+                    });
+                }
+                Ok(_) | Err(_) => {} // regular file, missing → proceed
+            }
+
             let parent = path.parent().unwrap_or_else(|| Path::new("."));
 
-            {
-                let mut f = fs::File::create(&tmp_path)?;
-                f.write_all(content.as_bytes())?;
-                f.sync_all()?;
-            }
+            // Random suffix avoids fixed-name `EEXIST` from a crashed
+            // prior run and defeats same-uid pre-creation DoS.
+            let mut named =
+                tempfile::Builder::new()
+                    .prefix(".channels.")
+                    .suffix(".scm.tmp")
+                    .tempfile_in(parent)
+                    .map_err(ChannelsError::Io)?;
+            named.write_all(content.as_bytes()).map_err(ChannelsError::Io)?;
+            named.as_file().sync_all().map_err(ChannelsError::Io)?;
 
             // Copy (not rename) so the canonical path is never empty
             // between steps. Missing source means first-time write.
             match fs::copy(&path, &bak_path) {
                 Ok(_) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => {
-                    let _ = fs::remove_file(&tmp_path);
-                    return Err(e);
-                }
+                Err(e) => return Err(ChannelsError::Io(e)),
             }
 
-            fs::rename(&tmp_path, &path)?;
+            named.persist(&path).map_err(|e| ChannelsError::Io(e.error))?;
 
             // Best-effort: on filesystems without directory fsync this
             // is a no-op, not an error.
@@ -326,6 +350,138 @@ fn channel_to_sexp(ch: &Channel) -> String {
     }
     s.push(')');
     s
+}
+
+/// Beyond the Scheme-symbol shape check on `name`, blocks ASCII controls
+/// and deceptive Unicode (bidi, zero-width, separators) so a malicious
+/// discovery feed can't smuggle spoofed URLs into `channels.scm`.
+fn validate_channel_fields(ch: &Channel) -> Result<(), ChannelsError> {
+    validate_url(&ch.url)?;
+    if let Some(b) = &ch.branch {
+        validate_branch(b)?;
+    }
+    if let Some(c) = &ch.introduction_commit {
+        validate_introduction_commit(c)?;
+    }
+    if let Some(f) = &ch.introduction_fingerprint {
+        validate_introduction_fingerprint(f)?;
+    }
+    if matches!(ch.url.split("://").next(), Some("http" | "git")) {
+        // Warn-only by policy; MITM on cleartext swaps the Guile module
+        // set, so it must at least be observable in logs.
+        #[cfg(feature = "tracing")]
+        tracing::warn!(
+            target: "libguix::channels",
+            url = %ch.url,
+            "insecure channel scheme (http:// or git://) — vulnerable to MITM"
+        );
+    }
+    Ok(())
+}
+
+/// Invisible or direction-altering codepoints. The URL is shown to the
+/// user verbatim before confirmation, so what they see must match what
+/// `guix pull` resolves.
+fn is_deceptive_unicode(c: char) -> bool {
+    matches!(c,
+        // Bidi controls (RTL override, embedding, isolates)
+        '\u{200E}' | '\u{200F}'
+        | '\u{202A}'..='\u{202E}'
+        | '\u{2066}'..='\u{2069}'
+        // Zero-width chars
+        | '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{FEFF}'
+        // Line/paragraph separators
+        | '\u{2028}' | '\u{2029}'
+        // Soft hyphen, word joiner, invisible math operators
+        | '\u{00AD}' | '\u{2060}' | '\u{2061}'..='\u{2064}'
+    )
+}
+
+fn validate_url(url: &str) -> Result<(), ChannelsError> {
+    const SCHEMES: &[&str] = &["https://", "http://", "git://", "ssh://", "file://"];
+    if !SCHEMES.iter().any(|s| url.starts_with(s)) {
+        return Err(ChannelsError::Invalid {
+            field: "url".into(),
+            reason: "must start with https://, http://, git://, ssh:// or file://".into(),
+        });
+    }
+    if url.len() > 2048 {
+        return Err(ChannelsError::Invalid {
+            field: "url".into(),
+            reason: format!("length {} exceeds 2048", url.len()),
+        });
+    }
+    for c in url.chars() {
+        if c.is_control() {
+            return Err(ChannelsError::Invalid {
+                field: "url".into(),
+                reason: format!("contains control char (U+{:04X})", c as u32),
+            });
+        }
+        if is_deceptive_unicode(c) {
+            return Err(ChannelsError::Invalid {
+                field: "url".into(),
+                reason: format!(
+                    "contains deceptive Unicode codepoint (U+{:04X}) — bidi override, zero-width, or similar",
+                    c as u32
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_branch(branch: &str) -> Result<(), ChannelsError> {
+    if branch.is_empty() || branch.len() > 200 {
+        return Err(ChannelsError::Invalid {
+            field: "branch".into(),
+            reason: format!("length {} out of range 1..=200", branch.len()),
+        });
+    }
+    for c in branch.chars() {
+        let ok = c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-' | '+');
+        if !ok {
+            return Err(ChannelsError::Invalid {
+                field: "branch".into(),
+                reason: format!("contains disallowed character `{c}`"),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_introduction_commit(commit: &str) -> Result<(), ChannelsError> {
+    if commit.len() < 7 || commit.len() > 64 {
+        return Err(ChannelsError::Invalid {
+            field: "introduction.commit".into(),
+            reason: format!("length {} out of range 7..=64", commit.len()),
+        });
+    }
+    if !commit.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(ChannelsError::Invalid {
+            field: "introduction.commit".into(),
+            reason: "must be hex digits only".into(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_introduction_fingerprint(fpr: &str) -> Result<(), ChannelsError> {
+    if fpr.len() < 8 || fpr.len() > 128 {
+        return Err(ChannelsError::Invalid {
+            field: "introduction.fingerprint".into(),
+            reason: format!("length {} out of range 8..=128", fpr.len()),
+        });
+    }
+    for c in fpr.chars() {
+        if !(c.is_ascii_hexdigit() || c == ' ') {
+            return Err(ChannelsError::Invalid {
+                field: "introduction.fingerprint".into(),
+                reason: format!("contains disallowed character `{c}`"),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Channel names must shape into a Scheme symbol so the embedded
@@ -535,6 +691,94 @@ mod tests {
         assert!(!is_valid_channel_name("bad name"));
         assert!(!is_valid_channel_name("nope;(drop)"));
         assert!(!is_valid_channel_name("with/slash"));
+    }
+
+    #[test]
+    fn validate_url_accepts_known_schemes() {
+        assert!(validate_url("https://example.org/foo.git").is_ok());
+        assert!(validate_url("http://example.org/foo.git").is_ok());
+        assert!(validate_url("git://example.org/foo.git").is_ok());
+        assert!(validate_url("ssh://git@example.org/foo.git").is_ok());
+        assert!(validate_url("file:///srv/repos/foo.git").is_ok());
+    }
+
+    #[test]
+    fn validate_url_rejects_unknown_scheme() {
+        let err = validate_url("javascript:alert(1)").unwrap_err();
+        assert!(matches!(err, ChannelsError::Invalid { field, .. } if field == "url"));
+    }
+
+    #[test]
+    fn validate_url_rejects_control_chars() {
+        // Embedded newline, NUL, DEL, zero-width — anything < 0x20 or 0x7f.
+        assert!(validate_url("https://example.org/foo\nbar").is_err());
+        assert!(validate_url("https://example.org/foo\0bar").is_err());
+        assert!(validate_url("https://example.org/foo\u{7f}bar").is_err());
+    }
+
+    #[test]
+    fn validate_url_rejects_deceptive_unicode() {
+        // Bidi override, zero-width space, line separator, soft hyphen.
+        assert!(validate_url("https://example.org/foo\u{202E}bar").is_err());
+        assert!(validate_url("https://example.org/\u{200B}example.com").is_err());
+        assert!(validate_url("https://example.org/\u{2028}").is_err());
+        assert!(validate_url("https://example.org/foo\u{00AD}bar").is_err());
+    }
+
+    #[test]
+    fn validate_url_rejects_over_length() {
+        let mut s = String::from("https://example.org/");
+        s.push_str(&"a".repeat(2048));
+        assert!(validate_url(&s).is_err());
+    }
+
+    #[test]
+    fn validate_branch_accepts_typical_names() {
+        assert!(validate_branch("master").is_ok());
+        assert!(validate_branch("release/1.2.3").is_ok());
+        assert!(validate_branch("feature/foo-bar_baz+x").is_ok());
+    }
+
+    #[test]
+    fn validate_branch_rejects_bad_chars() {
+        assert!(validate_branch("").is_err());
+        assert!(validate_branch("bad name").is_err());
+        assert!(validate_branch("bad;name").is_err());
+        assert!(validate_branch("bad\nname").is_err());
+        assert!(validate_branch(&"x".repeat(201)).is_err());
+    }
+
+    #[test]
+    fn validate_introduction_commit_accepts_hex() {
+        assert!(validate_introduction_commit("abcdef0").is_ok());
+        assert!(validate_introduction_commit(&"a".repeat(64)).is_ok());
+        assert!(validate_introduction_commit("DEADBEEF").is_ok());
+    }
+
+    #[test]
+    fn validate_introduction_commit_rejects_non_hex_or_bad_length() {
+        assert!(validate_introduction_commit("xyz1234").is_err());
+        assert!(validate_introduction_commit("abc").is_err());
+        assert!(validate_introduction_commit(&"a".repeat(65)).is_err());
+        assert!(validate_introduction_commit("dead beef").is_err());
+    }
+
+    #[test]
+    fn validate_introduction_fingerprint_accepts_hex_with_spaces() {
+        assert!(validate_introduction_fingerprint("AABBCCDD").is_ok());
+        assert!(validate_introduction_fingerprint("AA BB CC DD EE FF").is_ok());
+        assert!(validate_introduction_fingerprint(
+            "BBB0 2EA2 96C4 B96B 8BA8  5DEA 16CD AC4F 0386 5722"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn validate_introduction_fingerprint_rejects_non_hex_or_bad_length() {
+        assert!(validate_introduction_fingerprint("nothex!").is_err());
+        assert!(validate_introduction_fingerprint("AA").is_err());
+        assert!(validate_introduction_fingerprint(&"A".repeat(129)).is_err());
+        assert!(validate_introduction_fingerprint("AA\nBB CC DD").is_err());
     }
 
     /// `/gnu/store/...` symlink targets must be flagged as

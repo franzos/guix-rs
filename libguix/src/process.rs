@@ -21,7 +21,10 @@ pub(crate) async fn graceful_kill(child: &mut Child) -> Option<i32> {
     let Some(pid) = child.id() else {
         return child.wait().await.ok().map(status_to_code);
     };
-    let pid = Pid::from_raw(pid as i32);
+    let Ok(pid_i32) = i32::try_from(pid) else {
+        return child.wait().await.ok().map(status_to_code);
+    };
+    let pid = Pid::from_raw(pid_i32);
 
     // ESRCH is fine — child may have exited between try_wait and kill.
     let _ = kill(pid, Signal::SIGTERM);
