@@ -20,7 +20,7 @@ impl std::fmt::Display for LangChoice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LangChoice::System => f.write_str(&crate::t!("settings-language-system")),
-            LangChoice::Locale(id) => write!(f, "{id}"),
+            LangChoice::Locale(id) => f.write_str(&crate::i18n::display_name(id)),
         }
     }
 }

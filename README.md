@@ -39,6 +39,14 @@ For smoke-testing without mutating your real profile, build with the `dev-temp-p
 cargo run -p guix-gui --release --features dev-temp-profile
 ```
 
+## Translations
+
+The GUI ships in English plus German, Spanish, French, Italian, Brazilian Portuguese, and Simplified Chinese. It follows your system locale by default and falls back to English; you can also override the language in **Settings**, and the switch is live — no restart.
+
+Strings live as [Fluent](https://projectfluent.org/) catalogues under [`guix-gui/i18n/`](guix-gui/i18n) — one `<lang>/guix-gui.ftl` per locale, embedded into the binary at build time. Adding a language is just dropping a new `i18n/<code>/guix-gui.ftl` (copy `en/` as the template) and rebuilding — no code change.
+
+One caveat: only the English catalogue is hand-written. The rest are machine-translated and haven't had a native-speaker pass, so expect the odd rough edge. Corrections and new languages are very welcome — a PR against the relevant `.ftl` is the whole job.
+
 ## Build
 
 The repo has a `manifest.scm` that pins every native dep `libguix` and `guix-gui` need — Rust toolchain, `gcc-toolchain` with `CC` set, `pkg-config`, `openssl` with `OPENSSL_DIR` set, plus the X11 / Wayland / Vulkan / fontconfig stack that Iced 0.13 (on wgpu) requires at build and run time.

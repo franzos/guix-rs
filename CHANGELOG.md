@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.6] - 2026-06-02
+
+### Added
+- Translatable UI — follows the system locale, with an in-app language picker and live switching
+- Translations: German, Spanish, French, Italian, Brazilian Portuguese, Simplified Chinese
+
 ## [0.1.5] - 2026-05-24
 
 ### Added

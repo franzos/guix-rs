@@ -1,6 +1,6 @@
 //! Fluent-backed localization. Catalogues are embedded via `rust-embed`;
 //! the active locale follows the system default plus a persisted in-app
-//! override (override wins). Only `en` ships today.
+//! override (override wins). `en` is the source and fallback.
 
 use std::sync::OnceLock;
 
@@ -43,6 +43,21 @@ pub fn available_locales() -> Vec<LanguageIdentifier> {
     loader()
         .available_languages(&Localizations)
         .unwrap_or_default()
+}
+
+/// Endonym for the language picker; falls back to the BCP-47 tag.
+pub fn display_name(id: &LanguageIdentifier) -> String {
+    match id.to_string().as_str() {
+        "en" => "English",
+        "de" => "Deutsch",
+        "es" => "Español",
+        "fr" => "Français",
+        "it" => "Italiano",
+        "pt-BR" => "Português (Brasil)",
+        "zh-CN" => "中文（简体）",
+        other => return other.to_string(),
+    }
+    .to_string()
 }
 
 pub fn select_language(requested: &[LanguageIdentifier]) {
@@ -106,5 +121,66 @@ mod tests {
         let langs = requested_languages(Some("not a tag"));
         let en: LanguageIdentifier = "en".parse().unwrap();
         assert_eq!(langs.last(), Some(&en));
+    }
+
+    fn file_src(tag: &str) -> String {
+        let f = Localizations::get(&format!("{tag}/guix-gui.ftl"))
+            .unwrap_or_else(|| panic!("missing {tag}/guix-gui.ftl"));
+        String::from_utf8(f.data.into_owned()).expect("utf8")
+    }
+
+    fn message_ids(src: &str) -> std::collections::BTreeSet<String> {
+        src.lines()
+            .filter(|l| l.starts_with(|c: char| c.is_ascii_lowercase()))
+            .filter_map(|l| l.split('=').next().map(str::trim))
+            .filter(|id| {
+                !id.is_empty()
+                    && id
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+            })
+            .map(String::from)
+            .collect()
+    }
+
+    fn var_refs(src: &str) -> std::collections::BTreeSet<String> {
+        let b = src.as_bytes();
+        let mut out = std::collections::BTreeSet::new();
+        let mut i = 0;
+        while i < b.len() {
+            if b[i] == b'$' {
+                let start = i + 1;
+                let mut j = start;
+                while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'_') {
+                    j += 1;
+                }
+                if j > start {
+                    out.insert(src[start..j].to_string());
+                }
+                i = j;
+            } else {
+                i += 1;
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn every_locale_loads_and_matches_en_keys_and_vars() {
+        let en_ids = message_ids(&file_src("en"));
+        let en_vars = var_refs(&file_src("en"));
+        for loc in available_locales() {
+            let tag = loc.to_string();
+            let l = fluent_language_loader!();
+            l.load_languages(&Localizations, &[loc.clone()])
+                .unwrap_or_else(|e| panic!("{tag}: failed to parse/load: {e}"));
+            let src = file_src(&tag);
+            assert_eq!(
+                message_ids(&src),
+                en_ids,
+                "{tag}: message-id set differs from en"
+            );
+            assert_eq!(var_refs(&src), en_vars, "{tag}: $var set differs from en");
+        }
     }
 }
