@@ -14,7 +14,7 @@ use crate::util::{humanize_age, short_hash};
 pub fn view(app: &App) -> Element<'_, Message> {
     let busy = app.active_op.is_some();
     let source = app.settings.source_config_path.as_deref();
-    let header = App::view_header("Updates", None);
+    let header = App::view_header(crate::t!("updates-title"), None);
 
     let sections = column![
         user_packages_section(app, busy),
@@ -30,7 +30,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
 }
 
 fn user_packages_section<'a>(app: &'a App, busy: bool) -> Element<'a, Message> {
-    let blurb: Element<'a, Message> = text("Manage your user-level packages.")
+    let blurb: Element<'a, Message> = text(crate::t!("updates-your-packages-blurb"))
         .size(13)
         .color(MUTED)
         .into();
@@ -38,14 +38,14 @@ fn user_packages_section<'a>(app: &'a App, busy: bool) -> Element<'a, Message> {
     let summary = user_summary(app);
 
     let fetch_btn = primary_button(
-        "Fetch latest catalog",
+        crate::t!("updates-fetch-latest"),
         "guix pull",
         Message::FetchUserCatalogClicked,
         busy,
         false,
     );
     let apply_btn = primary_button(
-        "Update my packages",
+        crate::t!("updates-update-my-packages"),
         "guix package -u",
         Message::UpgradeClicked,
         busy,
@@ -54,29 +54,31 @@ fn user_packages_section<'a>(app: &'a App, busy: bool) -> Element<'a, Message> {
     let actions = row![fetch_btn, apply_btn].spacing(8);
 
     let body = column![blurb, summary, actions].spacing(10);
-    section_card("Your packages", body.into())
+    section_card(crate::t!("updates-your-packages"), body.into())
 }
 
 fn system_section<'a>(app: &'a App, source: Option<&'a Path>, busy: bool) -> Element<'a, Message> {
-    let blurb: Element<'a, Message> =
-        text("Apply your system configuration. Requires admin authentication.")
-            .size(13)
-            .color(MUTED)
-            .into();
+    let blurb: Element<'a, Message> = text(crate::t!("updates-system-blurb"))
+        .size(13)
+        .color(MUTED)
+        .into();
 
     let summary = system_summary(app);
 
     let source_display: Element<'a, Message> = match source {
-        Some(p) => text(format!("Source config: {}", p.display()))
-            .size(12)
-            .color(MUTED)
-            .into(),
-        None => text("Source config: (not set — open Settings to choose)")
+        Some(p) => text(crate::t!(
+            "updates-source-config",
+            path = p.display().to_string()
+        ))
+        .size(12)
+        .color(MUTED)
+        .into(),
+        None => text(crate::t!("updates-source-config-unset"))
             .size(12)
             .color(MUTED)
             .into(),
     };
-    let open_system = button(text("Open Settings").size(12))
+    let open_system = button(text(crate::t!("common-open-settings")).size(12))
         .padding([6, 12])
         .style(styles::btn_ghost)
         .on_press(Message::TabSelected(Tab::System));
@@ -85,7 +87,7 @@ fn system_section<'a>(app: &'a App, source: Option<&'a Path>, busy: bool) -> Ele
         .align_y(iced::Alignment::Center);
 
     let fetch_btn = primary_button(
-        "Fetch system catalog",
+        crate::t!("updates-fetch-system"),
         "pkexec guix pull",
         Message::FetchSystemCatalogClicked,
         busy,
@@ -101,13 +103,13 @@ fn system_section<'a>(app: &'a App, source: Option<&'a Path>, busy: bool) -> Ele
             } else {
                 None
             };
-            let apply_inner = button(text("Update system").size(13))
+            let apply_inner = button(text(crate::t!("updates-update-system")).size(13))
                 .padding([8, 16])
                 .style(styles::btn_primary)
                 .on_press_maybe(apply_on_press);
             let apply_btn: Element<'a, Message> = tooltip(
                 apply_inner,
-                container(text("pkexec guix system reconfigure"))
+                container(text(crate::t!("updates-update-system-tip")))
                     .padding(6)
                     .style(styles::card_flat),
                 tooltip::Position::Top,
@@ -117,22 +119,21 @@ fn system_section<'a>(app: &'a App, source: Option<&'a Path>, busy: bool) -> Ele
         };
 
     let body = column![blurb, summary, source_row, action_area].spacing(10);
-    section_card("System", body.into())
+    section_card(crate::t!("updates-system"), body.into())
 }
 
 /// Confirmation card for `pkexec guix system reconfigure`. Lists the
 /// config and every `-L` load path so the user authorises each
 /// root-loaded module path explicitly.
 fn confirm_reconfigure_card<'a>(pending: &'a PendingReconfigure) -> Column<'a, Message> {
-    let header = text("Confirm system reconfigure").size(14).font(BOLD);
-    let blurb = text(
-        "Running as root via pkexec. Verify the paths below — each will \
-         be loaded by Guile with root privileges.",
-    )
-    .size(12)
-    .color(MUTED);
+    let header = text(crate::t!("updates-confirm-reconfigure"))
+        .size(14)
+        .font(BOLD);
+    let blurb = text(crate::t!("updates-reconfigure-blurb"))
+        .size(12)
+        .color(MUTED);
 
-    let cfg_label = text("Config:").size(12).color(MUTED);
+    let cfg_label = text(crate::t!("updates-config")).size(12).color(MUTED);
     let cfg_value = text(pending.config_path.display().to_string())
         .size(12)
         .font(Font::MONOSPACE);
@@ -140,16 +141,13 @@ fn confirm_reconfigure_card<'a>(pending: &'a PendingReconfigure) -> Column<'a, M
     let mut col: Column<'a, Message> = column![header, blurb, cfg_label, cfg_value].spacing(6);
 
     let lp_label = if pending.load_paths.is_empty() {
-        text("Load paths (-L): (none)").size(12).color(MUTED)
+        text(crate::t!("updates-load-paths-none"))
+            .size(12)
+            .color(MUTED)
     } else {
-        text(format!(
-            "Load paths (-L), {} entr{}:",
-            pending.load_paths.len(),
-            if pending.load_paths.len() == 1 {
-                "y"
-            } else {
-                "ies"
-            }
+        text(crate::t!(
+            "updates-load-paths",
+            count = pending.load_paths.len()
         ))
         .size(12)
         .color(MUTED)
@@ -159,11 +157,11 @@ fn confirm_reconfigure_card<'a>(pending: &'a PendingReconfigure) -> Column<'a, M
         col = col.push(text(p.display().to_string()).size(12).font(Font::MONOSPACE));
     }
 
-    let confirm = button(text("Confirm reconfigure").size(13))
+    let confirm = button(text(crate::t!("updates-confirm-reconfigure-btn")).size(13))
         .padding([8, 16])
         .style(styles::btn_primary)
         .on_press(Message::ReconfigureConfirmed);
-    let cancel = button(text("Cancel").size(13))
+    let cancel = button(text(crate::t!("common-cancel")).size(13))
         .padding([8, 16])
         .style(styles::btn_ghost)
         .on_press(Message::ReconfigureCancelled);
@@ -172,8 +170,11 @@ fn confirm_reconfigure_card<'a>(pending: &'a PendingReconfigure) -> Column<'a, M
     col
 }
 
-fn section_card<'a>(header_label: &'a str, body: Element<'a, Message>) -> Element<'a, Message> {
-    let header = text(header_label).size(16).font(BOLD);
+fn section_card<'a>(
+    header_label: impl Into<String>,
+    body: Element<'a, Message>,
+) -> Element<'a, Message> {
+    let header = text(header_label.into()).size(16).font(BOLD);
     let inner = column![header, body].spacing(10);
     container(inner)
         .padding(20)
@@ -183,7 +184,7 @@ fn section_card<'a>(header_label: &'a str, body: Element<'a, Message>) -> Elemen
 }
 
 fn primary_button<'a>(
-    label: &'a str,
+    label: impl Into<String>,
     tip: &'a str,
     msg: Message,
     busy: bool,
@@ -195,7 +196,7 @@ fn primary_button<'a>(
         } else {
             styles::btn_secondary
         };
-    let btn = button(text(label).size(13))
+    let btn = button(text(label.into()).size(13))
         .padding([8, 16])
         .style(style)
         .on_press_maybe(if busy { None } else { Some(msg) });
@@ -211,29 +212,36 @@ fn primary_button<'a>(
 
 fn user_summary(app: &App) -> Element<'_, Message> {
     if app.updates.loading_channels {
-        return text("Loading channels...").size(12).color(MUTED).into();
+        return text(crate::t!("updates-loading-channels"))
+            .size(12)
+            .color(MUTED)
+            .into();
     }
     if let Some(e) = &app.updates.error {
-        return text(format!("Error loading channels: {e}"))
+        return text(crate::t!("updates-error-channels", error = e.clone()))
             .size(12)
             .color(styles::DANGER)
             .into();
     }
 
     let last = match app.updates.mtimes.user_pull {
-        Some(t) => format!("Last pulled: {}.", humanize_age(t)),
-        None => "Last pulled: never.".to_string(),
+        Some(t) => crate::t!("updates-last-pulled", age = humanize_age(t)),
+        None => crate::t!("updates-last-pulled-never"),
     };
 
     let channels = if app.updates.channels.is_empty() {
-        "Channels: (none discovered).".to_string()
+        crate::t!("updates-channels-none")
     } else {
         let mut parts: Vec<String> = Vec::with_capacity(app.updates.channels.len());
         for c in &app.updates.channels {
-            let h = c.commit.as_deref().map(short_hash).unwrap_or("(no commit)");
+            let h = c
+                .commit
+                .as_deref()
+                .map(|c| short_hash(c).to_string())
+                .unwrap_or_else(|| crate::t!("updates-channel-no-commit"));
             parts.push(format!("{} {}", c.name, h));
         }
-        format!("Channels: {}.", parts.join(", "))
+        crate::t!("updates-channels", list = parts.join(", "))
     };
 
     let mut col: Column<'_, Message> = Column::new().spacing(2);
@@ -244,12 +252,12 @@ fn user_summary(app: &App) -> Element<'_, Message> {
 
 fn system_summary(app: &App) -> Element<'_, Message> {
     let root = match app.updates.mtimes.root_pull {
-        Some(t) => format!("Last pulled (root): {}.", humanize_age(t)),
-        None => "Last pulled (root): never.".to_string(),
+        Some(t) => crate::t!("updates-last-pulled-root", age = humanize_age(t)),
+        None => crate::t!("updates-last-pulled-root-never"),
     };
     let reconf = match app.updates.mtimes.system_profile {
-        Some(t) => format!("Last reconfigured: {}.", humanize_age(t)),
-        None => "Last reconfigured: never (not a Guix System host?).".to_string(),
+        Some(t) => crate::t!("updates-last-reconfigured", age = humanize_age(t)),
+        None => crate::t!("updates-last-reconfigured-never"),
     };
 
     let mut col: Column<'_, Message> = Column::new().spacing(2);

@@ -15,58 +15,48 @@ const DEBIAN_SCREENSHOTS_URL: &str = "https://screenshots.debian.net";
 const TOYS_WHEREIS_URL: &str = "https://toys.whereis.social";
 
 pub fn view(_app: &App) -> Element<'_, Message> {
-    let header = App::view_header("About", None);
+    let header = App::view_header(crate::t!("about-title"), None);
 
     let version_card = info_card(
-        "Guix GUI",
+        crate::t!("app-title"),
         format!(
-            "Version {}\nDesktop frontend for the Guix package manager.",
-            env!("CARGO_PKG_VERSION")
+            "{}\n{}",
+            crate::t!("about-version", version = env!("CARGO_PKG_VERSION")),
+            crate::t!("about-tagline"),
         ),
     );
 
     let authors_card = section_card(
-        "Authors",
+        crate::t!("about-authors"),
         column![text("Franz Geffke <mail@gofranz.com>").size(13).color(TEXT)].spacing(4),
     );
 
     let source_card = section_card(
-        "Source & contributions",
+        crate::t!("about-source"),
         column![
-            text("Bug reports and pull requests are welcome.")
-                .size(13)
-                .color(MUTED),
+            text(crate::t!("about-source-blurb")).size(13).color(MUTED),
             link_row(REPO_URL),
         ]
         .spacing(6),
     );
 
     let license_card = section_card(
-        "License",
+        crate::t!("about-license"),
         column![
-            text("Guix GUI is released under the GNU General Public License v3.0.")
-                .size(13)
-                .color(TEXT),
-            text(
-                "You may redistribute and modify it under the terms of that licence. \
-                 See the LICENSE file in the repository for the full text."
-            )
-            .size(12)
-            .color(MUTED),
+            text(crate::t!("about-license-line")).size(13).color(TEXT),
+            text(crate::t!("about-license-detail"))
+                .size(12)
+                .color(MUTED),
         ]
         .spacing(6),
     );
 
     let third_party_card = section_card(
-        "Third-party data",
+        crate::t!("about-third-party"),
         column![
-            text(
-                "Application icons and screenshots are fetched from external services \
-                 when you enable third-party metadata in Settings. Trademarks, icons, \
-                 and screenshots remain the property of their respective projects."
-            )
-            .size(12)
-            .color(MUTED),
+            text(crate::t!("about-third-party-blurb"))
+                .size(12)
+                .color(MUTED),
             link_row(FLATHUB_URL),
             link_row(DEBIAN_SCREENSHOTS_URL),
         ]
@@ -74,23 +64,18 @@ pub fn view(_app: &App) -> Element<'_, Message> {
     );
 
     let discovery_card = section_card(
-        "Channel discovery",
+        crate::t!("about-channel-discovery"),
         column![
-            text(
-                "The Channels tab's Discover sub-mode browses Guix channels and \
-                 packages indexed by toys.whereis.social. Opt-in; requires network. \
-                 The catalog and its contributors remain the property of their \
-                 respective projects."
-            )
-            .size(12)
-            .color(MUTED),
+            text(crate::t!("about-channel-discovery-blurb"))
+                .size(12)
+                .color(MUTED),
             link_row(TOYS_WHEREIS_URL),
         ]
         .spacing(6),
     );
 
     let dependencies_card = section_card(
-        "Built with",
+        crate::t!("about-built-with"),
         column![
             text(
                 "libguix (MIT / Apache-2.0) · iced (MIT) · reqwest (MIT / Apache-2.0) · \
@@ -99,7 +84,7 @@ pub fn view(_app: &App) -> Element<'_, Message> {
             )
             .size(12)
             .color(MUTED),
-            text("Licences of individual crates are listed in their respective repositories.")
+            text(crate::t!("about-built-with-detail"))
                 .size(11)
                 .color(MUTED),
         ]
@@ -121,18 +106,18 @@ pub fn view(_app: &App) -> Element<'_, Message> {
     scrollable(body).height(Length::Fill).into()
 }
 
-fn section_card<'a>(title: &'a str, body: Column<'a, Message>) -> Element<'a, Message> {
-    container(column![text(title).size(16).font(BOLD).color(TEXT), body].spacing(8))
+fn section_card<'a>(title: impl Into<String>, body: Column<'a, Message>) -> Element<'a, Message> {
+    container(column![text(title.into()).size(16).font(BOLD).color(TEXT), body].spacing(8))
         .padding(20)
         .width(Length::Fill)
         .style(styles::card)
         .into()
 }
 
-fn info_card<'a>(title: &'a str, body: String) -> Element<'a, Message> {
+fn info_card<'a>(title: impl Into<String>, body: String) -> Element<'a, Message> {
     container(
         column![
-            text(title).size(20).font(BOLD).color(TEXT),
+            text(title.into()).size(20).font(BOLD).color(TEXT),
             text(body).size(13).color(MUTED),
         ]
         .spacing(6),

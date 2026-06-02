@@ -7,29 +7,27 @@ use crate::styles::{self, BOLD, MUTED};
 const SECONDARY_LINE_CHAR_LIMIT: usize = 90;
 
 pub fn view(app: &App) -> Element<'_, Message> {
-    let refresh = button(text("Refresh").size(13))
+    let refresh = button(text(crate::t!("common-refresh")).size(13))
         .padding([8, 16])
         .style(styles::btn_secondary)
         .on_press(Message::InstalledRefresh);
-    let header = App::view_header("Installed", Some(refresh.into()));
+    let header = App::view_header(crate::t!("installed-title"), Some(refresh.into()));
 
-    let count: Element<'_, Message> = text(format!(
-        "{} installed package{}",
-        app.installed.packages.len(),
-        if app.installed.packages.len() == 1 {
-            ""
-        } else {
-            "s"
-        }
+    let count: Element<'_, Message> = text(crate::t!(
+        "installed-count",
+        count = app.installed.packages.len()
     ))
     .size(12)
     .color(MUTED)
     .into();
 
     let status: Element<'_, Message> = if app.installed.refreshing {
-        text("Loading...").size(12).color(MUTED).into()
+        text(crate::t!("installed-loading"))
+            .size(12)
+            .color(MUTED)
+            .into()
     } else if let Some(err) = &app.installed.error {
-        text(format!("Error: {err}"))
+        text(crate::t!("installed-error", error = err.clone()))
             .size(12)
             .color(styles::DANGER)
             .into()
@@ -51,7 +49,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
         ]
         .spacing(2);
 
-        let remove_btn = button(text("Remove").size(12))
+        let remove_btn = button(text(crate::t!("common-remove")).size(12))
             .padding([6, 14])
             .style(styles::btn_danger)
             .on_press(Message::RemoveRequested(p.name.clone()));

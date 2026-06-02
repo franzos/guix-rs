@@ -21,15 +21,15 @@ pub enum Tab {
 }
 
 impl Tab {
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Tab::Home => "Home",
-            Tab::Search => "Search",
-            Tab::Installed => "Installed",
-            Tab::Updates => "Updates",
-            Tab::Channels => "Channels",
-            Tab::System => "Settings",
-            Tab::About => "About",
+            Tab::Home => crate::t!("tab-home"),
+            Tab::Search => crate::t!("tab-search"),
+            Tab::Installed => crate::t!("tab-installed"),
+            Tab::Updates => crate::t!("tab-updates"),
+            Tab::Channels => crate::t!("tab-channels"),
+            Tab::System => crate::t!("tab-system"),
+            Tab::About => crate::t!("tab-about"),
         }
     }
 }
@@ -54,6 +54,10 @@ pub struct Settings {
     /// anywhere in the app — no sub-mode toggle, no buttons, no network.
     #[serde(default)]
     pub discovery_enabled: bool,
+    /// BCP-47 language tag overriding the system locale. `None` follows
+    /// the system default.
+    #[serde(default)]
+    pub language: Option<String>,
 }
 
 /// Opt-in fetch of icons + screenshots from third-party catalogs. Off by
@@ -214,6 +218,7 @@ mod tests {
             show_log_by_default: true,
             app_metadata: AppMetadataSettings::default(),
             discovery_enabled: true,
+            language: Some("de-DE".to_string()),
         };
         original.save_to(&path).expect("save");
         let loaded = Settings::load_from(&path);
@@ -231,6 +236,7 @@ mod tests {
         );
         assert!(loaded.show_log_by_default);
         assert!(loaded.discovery_enabled);
+        assert_eq!(loaded.language.as_deref(), Some("de-DE"));
     }
 
     #[test]

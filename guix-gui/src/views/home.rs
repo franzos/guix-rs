@@ -16,13 +16,8 @@ const TILE_HEIGHT: f32 = 96.0;
 const ICON_SIZE: f32 = 48.0;
 
 pub fn view(app: &App) -> Element<'_, Message> {
-    let header = App::view_header("Home", None);
-    let subtitle = text(
-        "A starting point — well-known applications available in Guix. \
-         Open one to install, or use Search for the full catalogue.",
-    )
-    .size(13)
-    .color(MUTED);
+    let header = App::view_header(crate::t!("home-title"), None);
+    let subtitle = text(crate::t!("home-subtitle")).size(13).color(MUTED);
 
     let mut content: Column<'_, Message> = column![header, subtitle].spacing(8);
 
@@ -155,7 +150,10 @@ fn icon_placeholder<'a>() -> Element<'a, Message> {
 
 fn installed_badge<'a>(installed: bool) -> Element<'a, Message> {
     if installed {
-        text("installed").size(10).color(styles::SUCCESS).into()
+        text(crate::t!("home-installed-badge"))
+            .size(10)
+            .color(styles::SUCCESS)
+            .into()
     } else {
         text("").size(10).into()
     }

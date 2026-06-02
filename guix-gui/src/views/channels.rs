@@ -18,21 +18,16 @@ use guix_gui::discovery::{DiscoveredChannel, DiscoveredPackage};
 use libguix::KnownBug;
 
 pub fn view(app: &App) -> Element<'_, Message> {
-    let refresh = button(text("Refresh").size(13))
+    let refresh = button(text(crate::t!("common-refresh")).size(13))
         .padding([8, 16])
         .style(styles::btn_secondary)
         .on_press(Message::ChannelsRefresh);
-    let header = App::view_header("Channels", Some(refresh.into()));
+    let header = App::view_header(crate::t!("channels-title"), Some(refresh.into()));
 
     // Plain-language intro — mirrors the muted subtitle pattern from
     // `views/home.rs`. The audience here is users who don't already
     // manage channels.scm declaratively.
-    let intro = text(
-        "Channels are package sources for Guix. Adding a channel lets you install \
-         software it provides. Removing one means its packages stop getting updates.",
-    )
-    .size(13)
-    .color(MUTED);
+    let intro = text(crate::t!("channels-intro")).size(13).color(MUTED);
 
     let path_strip = path_strip(app);
     let banner = store_managed_banner(app);
@@ -49,7 +44,9 @@ pub fn view(app: &App) -> Element<'_, Message> {
     // Sub-section heading. Today the tab only carries user-level
     // channels; when system-level editing arrives (Phase 4) a parallel
     // "SYSTEM CHANNELS" heading appears below with the same shape.
-    let user_channels_heading = text("USER CHANNELS").size(12).color(MUTED);
+    let user_channels_heading = text(crate::t!("channels-section-user"))
+        .size(12)
+        .color(MUTED);
 
     let mut col: Column<'_, Message> = column![header, intro, user_channels_heading].spacing(8);
 
@@ -81,7 +78,10 @@ pub fn view(app: &App) -> Element<'_, Message> {
         col = col.push(discover_body(app));
     } else {
         let body_inner: Element<'_, Message> = if app.channels.loading {
-            text("Loading channels.scm...").size(13).color(MUTED).into()
+            text(crate::t!("channels-loading"))
+                .size(13)
+                .color(MUTED)
+                .into()
         } else if let Some(err) = &app.channels.error {
             error_card(err)
         } else if app.channels.file.is_some() {
@@ -113,7 +113,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
 /// Segmented-control style sub-mode toggle. Only rendered when
 /// `discovery_enabled` is true (caller-side gated).
 fn sub_mode_toggle(app: &App) -> Element<'_, Message> {
-    let mk = |label: &'static str, mode: ChannelsSubMode| -> Element<'_, Message> {
+    let mk = |label: String, mode: ChannelsSubMode| -> Element<'_, Message> {
         let active = app.channels.sub_mode == mode;
         let style = if active {
             styles::btn_secondary
@@ -128,8 +128,14 @@ fn sub_mode_toggle(app: &App) -> Element<'_, Message> {
     };
     container(
         row![
-            mk("Installed", ChannelsSubMode::Installed),
-            mk("Discover", ChannelsSubMode::Discover),
+            mk(
+                crate::t!("channels-submode-installed"),
+                ChannelsSubMode::Installed
+            ),
+            mk(
+                crate::t!("channels-submode-discover"),
+                ChannelsSubMode::Discover
+            ),
         ]
         .spacing(4),
     )
@@ -145,17 +151,20 @@ fn path_strip(app: &App) -> Element<'_, Message> {
             .channels_source_path
             .as_ref()
             .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "~/.config/guix/channels.scm (default)".into()),
+            .unwrap_or_else(|| crate::t!("channels-default-path")),
     };
 
     let writable_badge: Element<'_, Message> = if let Some(f) = &app.channels.file {
         if f.is_store_managed {
-            text("store-managed (read-only)")
+            text(crate::t!("channels-store-managed"))
                 .size(12)
                 .color(styles::WARNING)
                 .into()
         } else {
-            text("writable").size(12).color(styles::SUCCESS).into()
+            text(crate::t!("channels-writable"))
+                .size(12)
+                .color(styles::SUCCESS)
+                .into()
         }
     } else {
         text("").size(12).into()
@@ -163,9 +172,11 @@ fn path_strip(app: &App) -> Element<'_, Message> {
 
     let restore: Option<Element<'_, Message>> = restore_control(app);
 
-    let mut row_widget = row![text(format!("File: {resolved}")).size(13).color(MUTED),]
-        .spacing(8)
-        .align_y(iced::Alignment::Center);
+    let mut row_widget = row![text(crate::t!("channels-file", path = resolved))
+        .size(13)
+        .color(MUTED),]
+    .spacing(8)
+    .align_y(iced::Alignment::Center);
     row_widget = row_widget.push(Space::new().width(Length::Fill));
     if let Some(r) = restore {
         row_widget = row_widget.push(r);
@@ -185,11 +196,11 @@ fn path_strip(app: &App) -> Element<'_, Message> {
 fn restore_control(app: &App) -> Option<Element<'_, Message>> {
     app.channels.backup_path.as_ref()?;
     if app.channels.pending_restore {
-        let confirm = button(text("Confirm restore").size(11))
+        let confirm = button(text(crate::t!("channels-confirm-restore")).size(11))
             .padding([4, 10])
             .style(styles::btn_secondary)
             .on_press(Message::ChannelsRestoreConfirmed);
-        let cancel = button(text("Cancel").size(11))
+        let cancel = button(text(crate::t!("common-cancel")).size(11))
             .padding([4, 10])
             .style(styles::btn_ghost)
             .on_press(Message::ChannelsRestoreCancelled);
@@ -197,7 +208,7 @@ fn restore_control(app: &App) -> Option<Element<'_, Message>> {
     }
     let on_press = (!app.channels.saving).then_some(Message::ChannelsRestoreClicked);
     Some(
-        button(text("Restore last backup").size(11))
+        button(text(crate::t!("channels-restore-last")).size(11))
             .padding([4, 10])
             .style(styles::btn_ghost)
             .on_press_maybe(on_press)
@@ -213,20 +224,21 @@ fn store_managed_banner(app: &App) -> Option<Element<'_, Message>> {
     // No section-level deep link in the existing tab nav — clicking jumps
     // to the Settings tab, the CHANNELS section sits at the bottom so the
     // user lands on the right input within a scroll.
-    let open_settings = button(text("Open Settings").size(12))
+    let open_settings = button(text(crate::t!("common-open-settings")).size(12))
         .padding([6, 12])
         .style(styles::btn_secondary)
         .on_press(Message::TabSelected(Tab::System));
     let body = column![
-        text("This file can't be edited here").size(14).font(BOLD),
-        text(
-            "Your channels.scm is managed by `guix home` (or another tool) \
-             and can't be edited directly. To use guix-gui for channel \
-             changes, set a writable file in "
-        )
+        text(crate::t!("channels-cant-edit-title"))
+            .size(14)
+            .font(BOLD),
+        text(crate::t!(
+            "channels-cant-edit-blurb",
+            settings_tab = crate::t!("tab-system"),
+            channels_tab = crate::t!("tab-channels")
+        ))
         .size(13)
         .color(MUTED),
-        text("Settings → Channels.").size(13).font(BOLD),
         Space::new().height(6),
         open_settings,
     ]
@@ -243,7 +255,7 @@ fn store_managed_banner(app: &App) -> Option<Element<'_, Message>> {
 fn pending_toast(app: &App) -> Option<Element<'_, Message>> {
     if app.channels.saving {
         return Some(
-            container(text("Saving...").size(12).color(MUTED))
+            container(text(crate::t!("channels-saving")).size(12).color(MUTED))
                 .padding(10)
                 .width(Length::Fill)
                 .style(styles::card_flat)
@@ -251,7 +263,7 @@ fn pending_toast(app: &App) -> Option<Element<'_, Message>> {
         );
     }
     let msg = app.channels.last_message.as_ref()?;
-    let dismiss = button(text("Dismiss").size(12))
+    let dismiss = button(text(crate::t!("common-dismiss")).size(12))
         .padding([6, 12])
         .style(styles::btn_ghost)
         .on_press(Message::ChannelsToastDismissed);
@@ -260,11 +272,12 @@ fn pending_toast(app: &App) -> Option<Element<'_, Message>> {
     // Two buttons — "Pull, then install <pkg>" (the happy path) and
     // "Pull only" (escape hatch if the user changed their mind).
     let row_widget = if let Some(pkg) = app.channels.post_apply_install_prompt.clone() {
-        let pull_install = button(text(format!("Pull, then install {pkg}")).size(12))
-            .padding([6, 12])
-            .style(styles::btn_secondary)
-            .on_press(Message::ChannelsToastPullAndInstallClicked(pkg.clone()));
-        let pull_only = button(text("Pull only").size(12))
+        let pull_install =
+            button(text(crate::t!("channels-pull-then-install", pkg = pkg.clone())).size(12))
+                .padding([6, 12])
+                .style(styles::btn_secondary)
+                .on_press(Message::ChannelsToastPullAndInstallClicked(pkg.clone()));
+        let pull_only = button(text(crate::t!("channels-pull-only")).size(12))
             .padding([6, 12])
             .style(styles::btn_ghost)
             .on_press(Message::ChannelsToastPullClicked);
@@ -278,7 +291,7 @@ fn pending_toast(app: &App) -> Option<Element<'_, Message>> {
         .spacing(8)
         .align_y(iced::Alignment::Center)
     } else {
-        let pull_btn = button(text("Pull now").size(12))
+        let pull_btn = button(text(crate::t!("channels-pull-now")).size(12))
             .padding([6, 12])
             .style(styles::btn_secondary)
             .on_press(Message::ChannelsToastPullClicked);
@@ -307,14 +320,14 @@ fn pending_toast(app: &App) -> Option<Element<'_, Message>> {
 /// confirms explicitly.
 fn rollback_offer_card<'a>(app: &'a App) -> Option<Element<'a, Message>> {
     let offer: &'a RollbackOffer = app.channels.rollback_offer.as_ref()?;
-    let dismiss = button(text("Keep changes").size(12))
+    let dismiss = button(text(crate::t!("channels-keep-changes")).size(12))
         .padding([6, 12])
         .style(styles::btn_ghost)
         .on_press(Message::ChannelsRollbackDismissed);
 
     let title_label = match offer.bug {
-        Some(KnownBug::ChannelShadow74396) => "Pull failed — channel shadow bug (#74396).",
-        None => "Pull failed.",
+        Some(KnownBug::ChannelShadow74396) => crate::t!("channels-pull-failed-shadow"),
+        None => crate::t!("channels-pull-failed"),
     };
 
     let mut body_col: iced::widget::Column<'_, Message> = Column::new().spacing(4);
@@ -322,19 +335,16 @@ fn rollback_offer_card<'a>(app: &'a App) -> Option<Element<'a, Message>> {
 
     if offer.backup_path.is_some() {
         body_col = body_col.push(
-            text(
-                "Your channels.scm has the new changes but Guix couldn't \
-                 fetch them. Restore the previous channels.scm?",
-            )
-            .size(12)
-            .color(MUTED),
+            text(crate::t!("channels-rollback-blurb"))
+                .size(12)
+                .color(MUTED),
         );
     } else {
         // write_atomic always creates a .bak, so this branch is
         // defensive — but if we reach it we explain plainly that
         // there's nothing to restore.
         body_col = body_col.push(
-            text("No previous channels.scm to restore.")
+            text(crate::t!("channels-rollback-none"))
                 .size(12)
                 .color(MUTED),
         );
@@ -353,14 +363,14 @@ fn rollback_offer_card<'a>(app: &'a App) -> Option<Element<'a, Message>> {
     }
 
     let actions: iced::widget::Row<'_, Message> = if offer.backup_path.is_some() {
-        let restore = button(text("Restore previous").size(12))
+        let restore = button(text(crate::t!("channels-restore-previous")).size(12))
             .padding([6, 12])
             .style(styles::btn_secondary)
             .on_press(Message::ChannelsRollbackConfirmed);
         row![restore, dismiss].spacing(8)
     } else {
         // No backup — only the dismiss escape hatch is meaningful.
-        row![button(text("Dismiss").size(12))
+        row![button(text(crate::t!("common-dismiss")).size(12))
             .padding([6, 12])
             .style(styles::btn_ghost)
             .on_press(Message::ChannelsRollbackDismissed)]
@@ -381,13 +391,10 @@ fn rollback_offer_card<'a>(app: &'a App) -> Option<Element<'a, Message>> {
 
 fn empty_state<'a>() -> Element<'a, Message> {
     let body = column![
-        text("No channels.scm found").size(16).font(BOLD),
-        text(
-            "Add a channel below to create one. The file lives at \
-             ~/.config/guix/channels.scm by default."
-        )
-        .size(12)
-        .color(MUTED),
+        text(crate::t!("channels-empty-title")).size(16).font(BOLD),
+        text(crate::t!("channels-empty-blurb"))
+            .size(12)
+            .color(MUTED),
     ]
     .spacing(4);
     container(body)
@@ -400,7 +407,10 @@ fn empty_state<'a>() -> Element<'a, Message> {
 fn error_card<'a>(err: &'a str) -> Element<'a, Message> {
     container(
         column![
-            text("Error").size(14).font(BOLD).color(styles::DANGER),
+            text(crate::t!("channels-error"))
+                .size(14)
+                .font(BOLD)
+                .color(styles::DANGER),
             text(err.to_string()).size(12).color(MUTED),
         ]
         .spacing(4),
@@ -416,13 +426,9 @@ fn installed_list(app: &App) -> Element<'_, Message> {
     let channels = f.list.channels();
     let writable = !f.is_store_managed;
 
-    let header = row![text(format!(
-        "{} channel{}",
-        channels.len(),
-        if channels.len() == 1 { "" } else { "s" }
-    ))
-    .size(12)
-    .color(MUTED),];
+    let header = row![text(crate::t!("channels-count", count = channels.len()))
+        .size(12)
+        .color(MUTED),];
 
     let mut rows: Column<'_, Message> = Column::new().spacing(8);
     for c in channels {
@@ -430,10 +436,14 @@ fn installed_list(app: &App) -> Element<'_, Message> {
     }
     if channels.is_empty() {
         rows = rows.push(
-            container(text("No channels in this file.").size(12).color(MUTED))
-                .padding(14)
-                .width(Length::Fill)
-                .style(styles::card_flat),
+            container(
+                text(crate::t!("channels-none-in-file"))
+                    .size(12)
+                    .color(MUTED),
+            )
+            .padding(14)
+            .width(Length::Fill)
+            .style(styles::card_flat),
         );
     }
 
@@ -474,8 +484,10 @@ fn inherited_footer(app: &App) -> Option<Element<'_, Message>> {
     }
 
     let body = column![
-        text("Also pulled in by your channels").size(13).font(BOLD),
-        text("These come from the channels above and are managed by them.")
+        text(crate::t!("channels-inherited-title"))
+            .size(13)
+            .font(BOLD),
+        text(crate::t!("channels-inherited-blurb"))
             .size(11)
             .color(MUTED),
         Space::new().height(4),
@@ -503,19 +515,35 @@ fn channel_row<'a>(app: &'a App, ch: &'a Channel, writable: bool) -> Element<'a,
     let mut details: Column<'_, Message> = Column::new().spacing(2);
     details = details.push(text(ch.url.clone()).size(12).color(MUTED));
     if let Some(b) = &ch.branch {
-        details = details.push(text(format!("branch: {b}")).size(11).color(MUTED));
+        details = details.push(
+            text(crate::t!("channels-branch", branch = b.clone()))
+                .size(11)
+                .color(MUTED),
+        );
     }
     if let Some(c) = &ch.commit {
-        details = details.push(text(format!("commit: {c}")).size(11).color(MUTED));
+        details = details.push(
+            text(crate::t!("channels-commit", commit = c.clone()))
+                .size(11)
+                .color(MUTED),
+        );
     }
     if ch.introduction_commit.is_some() {
         let fpr = ch
             .introduction_fingerprint
-            .as_deref()
-            .unwrap_or("(no fingerprint)");
-        details = details.push(text(format!("introduction: {fpr}")).size(11).color(MUTED));
+            .clone()
+            .unwrap_or_else(|| crate::t!("channels-no-fingerprint"));
+        details = details.push(
+            text(crate::t!("channels-introduction", fpr = fpr))
+                .size(11)
+                .color(MUTED),
+        );
     } else {
-        details = details.push(text("introduction: (none)").size(11).color(styles::WARNING));
+        details = details.push(
+            text(crate::t!("channels-introduction-none"))
+                .size(11)
+                .color(styles::WARNING),
+        );
     }
 
     let mut body: Column<'_, Message> = column![name_row, details].spacing(4);
@@ -558,16 +586,13 @@ fn remove_warning_dialog<'a>(app: &'a App, ch: &'a Channel) -> Option<Element<'a
         .as_ref()
         .and_then(|m| m.get(&ch.name))?;
 
-    let title = text(format!("Remove channel `{}`?", ch.name))
+    let title = text(crate::t!("channels-remove-title", name = ch.name.clone()))
         .size(14)
         .font(BOLD);
     let count = affected.len();
-    let intro = text(format!(
-        "{count} installed package{plural} come from this channel:",
-        plural = if count == 1 { "" } else { "s" },
-    ))
-    .size(12)
-    .color(MUTED);
+    let intro = text(crate::t!("channels-remove-intro", count = count))
+        .size(12)
+        .color(MUTED);
 
     // Bullet list of `name (version)` — no cap, scrollable when long.
     let mut pkg_list: Column<'_, Message> = Column::new().spacing(2);
@@ -580,10 +605,9 @@ fn remove_warning_dialog<'a>(app: &'a App, ch: &'a Channel) -> Option<Element<'a
         pkg_list.into()
     };
 
-    let explainer =
-        text("These will keep working but won't receive updates after the channel is removed.")
-            .size(12)
-            .color(MUTED);
+    let explainer = text(crate::t!("channels-remove-explainer"))
+        .size(12)
+        .color(MUTED);
 
     // Command snippet — `name1 name2 ...` for copy-paste. We render
     // it inside a `card_flat` container so it visually reads as a
@@ -596,7 +620,7 @@ fn remove_warning_dialog<'a>(app: &'a App, ch: &'a Channel) -> Option<Element<'a
         .map(|p| p.name.as_str())
         .collect::<Vec<_>>()
         .join(" ");
-    let cmd_label = text("To uninstall them along with the channel:")
+    let cmd_label = text(crate::t!("channels-remove-cmd-label"))
         .size(12)
         .color(MUTED);
     let cmd_snippet = container(text(format!("guix package -r {names_joined}")).size(12))
@@ -604,11 +628,11 @@ fn remove_warning_dialog<'a>(app: &'a App, ch: &'a Channel) -> Option<Element<'a
         .width(Length::Fill)
         .style(styles::card_flat);
 
-    let confirm = button(text("Remove channel anyway").size(12))
+    let confirm = button(text(crate::t!("channels-remove-anyway")).size(12))
         .padding([6, 12])
         .style(styles::btn_danger)
         .on_press(Message::ChannelsRemoveConfirmed(ch.name.clone()));
-    let cancel = button(text("Cancel").size(12))
+    let cancel = button(text(crate::t!("common-cancel")).size(12))
         .padding([6, 12])
         .style(styles::btn_ghost)
         .on_press(Message::ChannelsRemoveCancelled);
@@ -641,7 +665,10 @@ fn per_row_action<'a>(app: &'a App, ch: &'a Channel, writable: bool) -> Element<
     // The `guix` channel is locked — removing it would break the user's
     // setup. We don't render an action for it.
     if ch.name == "guix" {
-        return text("locked").size(11).color(MUTED).into();
+        return text(crate::t!("channels-locked"))
+            .size(11)
+            .color(MUTED)
+            .into();
     }
     let pending = app.channels.pending_remove.as_deref() == Some(ch.name.as_str());
     if pending {
@@ -655,13 +682,16 @@ fn per_row_action<'a>(app: &'a App, ch: &'a Channel, writable: bool) -> Element<
             &ch.name,
         );
         if warning_will_render {
-            return text("see warning below").size(11).color(MUTED).into();
+            return text(crate::t!("channels-see-warning"))
+                .size(11)
+                .color(MUTED)
+                .into();
         }
-        let confirm = button(text("Confirm remove").size(11))
+        let confirm = button(text(crate::t!("channels-confirm-remove")).size(11))
             .padding([4, 10])
             .style(styles::btn_danger)
             .on_press(Message::ChannelsRemoveConfirmed(ch.name.clone()));
-        let cancel = button(text("Cancel").size(11))
+        let cancel = button(text(crate::t!("common-cancel")).size(11))
             .padding([4, 10])
             .style(styles::btn_ghost)
             .on_press(Message::ChannelsRemoveCancelled);
@@ -672,7 +702,7 @@ fn per_row_action<'a>(app: &'a App, ch: &'a Channel, writable: bool) -> Element<
     } else {
         None
     };
-    button(text("Remove").size(11))
+    button(text(crate::t!("common-remove")).size(11))
         .padding([4, 10])
         .style(styles::btn_ghost)
         .on_press_maybe(on_press)
@@ -704,38 +734,41 @@ fn add_channel_form(app: &App) -> Element<'_, Message> {
         }
     };
 
-    let name_input = text_input("e.g. nonguix", &form.name)
+    let name_input = text_input(&crate::t!("channels-add-name-placeholder"), &form.name)
         .on_input(Message::ChannelsAddNameChanged)
         .on_submit_maybe(submit_on_enter())
         .padding(8)
         .size(13)
         .width(Length::Fill);
-    let url_input = text_input("https://gitlab.com/nonguix/nonguix", &form.url)
+    let url_input = text_input(&crate::t!("channels-add-url-placeholder"), &form.url)
         .on_input(Message::ChannelsAddUrlChanged)
         .on_submit_maybe(submit_on_enter())
         .padding(8)
         .size(13)
         .width(Length::Fill);
-    let branch_input = text_input("master (optional)", &form.branch)
+    let branch_input = text_input(&crate::t!("channels-add-branch-placeholder"), &form.branch)
         .on_input(Message::ChannelsAddBranchChanged)
         .on_submit_maybe(submit_on_enter())
         .padding(8)
         .size(13)
         .width(Length::Fill);
-    let commit_input = text_input("commit hash (optional)", &form.commit)
+    let commit_input = text_input(&crate::t!("channels-add-commit-placeholder"), &form.commit)
         .on_input(Message::ChannelsAddCommitChanged)
         .on_submit_maybe(submit_on_enter())
         .padding(8)
         .size(13)
         .width(Length::Fill);
-    let intro_commit_input = text_input("introduction commit hash", &form.intro_commit)
-        .on_input(Message::ChannelsAddIntroCommitChanged)
-        .on_submit_maybe(submit_on_enter())
-        .padding(8)
-        .size(13)
-        .width(Length::Fill);
+    let intro_commit_input = text_input(
+        &crate::t!("channels-add-intro-commit-placeholder"),
+        &form.intro_commit,
+    )
+    .on_input(Message::ChannelsAddIntroCommitChanged)
+    .on_submit_maybe(submit_on_enter())
+    .padding(8)
+    .size(13)
+    .width(Length::Fill);
     let intro_fpr_input = text_input(
-        "OpenPGP fingerprint (e.g. 2A39 3FFF 68F4 EF7A 3D29 ...)",
+        &crate::t!("channels-add-intro-fpr-placeholder"),
         &form.intro_fpr,
     )
     .on_input(Message::ChannelsAddIntroFprChanged)
@@ -743,7 +776,7 @@ fn add_channel_form(app: &App) -> Element<'_, Message> {
     .padding(8)
     .size(13)
     .width(Length::Fill);
-    let submit_btn = button(text("Add channel").size(13))
+    let submit_btn = button(text(crate::t!("channels-add-btn")).size(13))
         .padding([8, 16])
         .style(styles::btn_secondary)
         .on_press_maybe(if submit_enabled {
@@ -753,17 +786,15 @@ fn add_channel_form(app: &App) -> Element<'_, Message> {
         });
 
     let mut content = column![
-        text("Add a channel").size(16).font(BOLD),
-        text("All fields are stored verbatim; introduction commit + fingerprint are required.")
-            .size(12)
-            .color(MUTED),
+        text(crate::t!("channels-add-heading")).size(16).font(BOLD),
+        text(crate::t!("channels-add-blurb")).size(12).color(MUTED),
         Space::new().height(4),
-        labeled("Name", name_input),
-        labeled("URL", url_input),
-        labeled("Branch", branch_input),
-        labeled("Commit", commit_input),
-        labeled("Introduction commit", intro_commit_input),
-        labeled("Introduction fingerprint", intro_fpr_input),
+        labeled(crate::t!("channels-add-name"), name_input),
+        labeled(crate::t!("channels-add-url"), url_input),
+        labeled(crate::t!("channels-add-branch"), branch_input),
+        labeled(crate::t!("channels-add-commit"), commit_input),
+        labeled(crate::t!("channels-add-intro-commit"), intro_commit_input),
+        labeled(crate::t!("channels-add-intro-fpr"), intro_fpr_input),
     ]
     .spacing(6);
 
@@ -781,10 +812,10 @@ fn add_channel_form(app: &App) -> Element<'_, Message> {
 }
 
 fn labeled<'a>(
-    label: &'a str,
+    label: impl Into<String>,
     input: iced::widget::TextInput<'a, Message>,
 ) -> Element<'a, Message> {
-    column![text(label).size(12).color(MUTED), input]
+    column![text(label.into()).size(12).color(MUTED), input]
         .spacing(2)
         .into()
 }
@@ -822,7 +853,7 @@ fn discover_body(app: &App) -> Element<'_, Message> {
 
 fn discover_search_bar(app: &App) -> Element<'_, Message> {
     let input = text_input(
-        "Search packages or channels...",
+        &crate::t!("channels-discover-placeholder"),
         &app.channels.discover_query,
     )
     .on_input(Message::DiscoverQueryChanged)
@@ -842,16 +873,11 @@ fn discover_error_line(err: &str) -> Element<'_, Message> {
 
 fn packages_panel(app: &App) -> Element<'_, Message> {
     let header_text = if app.channels.discover_packages_loading {
-        "Searching...".to_string()
+        crate::t!("channels-searching")
     } else {
-        format!(
-            "{} package result{}",
-            app.channels.discover_packages.len(),
-            if app.channels.discover_packages.len() == 1 {
-                ""
-            } else {
-                "s"
-            },
+        crate::t!(
+            "channels-package-results",
+            count = app.channels.discover_packages.len()
         )
     };
     let mut rows: Column<'_, Message> = Column::new().spacing(6);
@@ -864,13 +890,17 @@ fn packages_panel(app: &App) -> Element<'_, Message> {
         grouped.entry(p.channel.as_str()).or_default().push(p);
     }
     for (channel, pkgs) in grouped {
-        rows = rows.push(text(format!("from {channel}")).size(12).color(MUTED));
+        rows = rows.push(
+            text(crate::t!("channels-from", channel = channel.to_string()))
+                .size(12)
+                .color(MUTED),
+        );
         for p in pkgs {
             rows = rows.push(package_row(app, p));
         }
     }
 
-    let title = text("Packages").size(14).font(BOLD);
+    let title = text(crate::t!("channels-packages")).size(14).font(BOLD);
     let inner = column![title, text(header_text).size(12).color(MUTED), rows].spacing(6);
     container(inner)
         .padding(14)
@@ -909,7 +939,7 @@ fn package_row<'a>(app: &'a App, p: &'a DiscoveredPackage) -> Element<'a, Messag
         // Channel already added — direct install via the existing
         // install plumbing (same message the Search tab uses).
         let on_press = (!app.channels.saving).then(|| Message::InstallRequested(p.name.clone()));
-        button(text("Install").size(11))
+        button(text(crate::t!("channels-install")).size(11))
             .padding([4, 10])
             .style(styles::btn_secondary)
             .on_press_maybe(on_press)
@@ -923,7 +953,7 @@ fn package_row<'a>(app: &'a App, p: &'a DiscoveredPackage) -> Element<'a, Messag
             )),
             _ => None,
         };
-        button(text("Add channel & install").size(11))
+        button(text(crate::t!("channels-add-and-install")).size(11))
             .padding([4, 10])
             .style(styles::btn_secondary)
             .on_press_maybe(on_press)
@@ -940,7 +970,9 @@ fn package_row<'a>(app: &'a App, p: &'a DiscoveredPackage) -> Element<'a, Messag
     .align_y(iced::Alignment::Center);
 
     let synopsis = if p.synopsis.is_empty() {
-        text("(no synopsis)").size(11).color(MUTED)
+        text(crate::t!("channels-no-synopsis"))
+            .size(11)
+            .color(MUTED)
     } else {
         text(p.synopsis.clone()).size(11).color(MUTED)
     };
@@ -954,12 +986,17 @@ fn package_row<'a>(app: &'a App, p: &'a DiscoveredPackage) -> Element<'a, Messag
 }
 
 fn channels_panel(app: &App) -> Element<'_, Message> {
-    let title = text("Channels").size(14).font(BOLD);
+    let title = text(crate::t!("channels-channels-heading"))
+        .size(14)
+        .font(BOLD);
 
     let body_inner: Element<'_, Message> = if app.channels.discover_channels_loading {
-        text("Loading channels...").size(12).color(MUTED).into()
+        text(crate::t!("channels-loading-discover"))
+            .size(12)
+            .color(MUTED)
+            .into()
     } else if app.channels.discover_channels.is_empty() {
-        text("No introduced channels were returned.")
+        text(crate::t!("channels-no-introduced"))
             .size(12)
             .color(MUTED)
             .into()
@@ -976,14 +1013,9 @@ fn channels_panel(app: &App) -> Element<'_, Message> {
         rows.into()
     };
 
-    let count_line = text(format!(
-        "{} channel{} available",
-        app.channels.discover_channels.len(),
-        if app.channels.discover_channels.len() == 1 {
-            ""
-        } else {
-            "s"
-        }
+    let count_line = text(crate::t!(
+        "channels-available",
+        count = app.channels.discover_channels.len()
     ))
     .size(12)
     .color(MUTED);
@@ -1012,13 +1044,16 @@ fn channel_discover_row<'a>(app: &'a App, c: &'a DiscoveredChannel) -> Element<'
 
     let parsed = c.to_channel();
     let cta: Element<'_, Message> = if already_present {
-        text("already added").size(11).color(MUTED).into()
+        text(crate::t!("channels-already-added"))
+            .size(11)
+            .color(MUTED)
+            .into()
     } else {
         let on_press = match (writable, parsed.clone()) {
             (true, Some(ch)) => Some(Message::DiscoverAddClicked(Carrier::new(ch))),
             _ => None,
         };
-        button(text("Add").size(11))
+        button(text(crate::t!("channels-add")).size(11))
             .padding([4, 10])
             .style(styles::btn_secondary)
             .on_press_maybe(on_press)
@@ -1036,10 +1071,10 @@ fn channel_discover_row<'a>(app: &'a App, c: &'a DiscoveredChannel) -> Element<'
     let title = row![
         text(c.name.clone()).size(13).font(BOLD),
         Space::new().width(Length::Fill),
-        text(format!("{} pkgs", c.packages_count))
+        text(crate::t!("channels-pkgs", count = c.packages_count))
             .size(11)
             .color(MUTED),
-        text(format!("{} svcs", c.services_count))
+        text(crate::t!("channels-svcs", count = c.services_count))
             .size(11)
             .color(MUTED),
         cta,
@@ -1049,9 +1084,11 @@ fn channel_discover_row<'a>(app: &'a App, c: &'a DiscoveredChannel) -> Element<'
 
     let url_line = text(c.url.clone()).size(11).color(MUTED);
     let fpr_line = if fpr_short.is_empty() {
-        text("intro: —").size(11).color(MUTED)
+        text(crate::t!("channels-intro-dash")).size(11).color(MUTED)
     } else {
-        text(format!("intro: {fpr_short}...")).size(11).color(MUTED)
+        text(crate::t!("channels-intro-short", fpr = fpr_short))
+            .size(11)
+            .color(MUTED)
     };
 
     let inner = column![title, url_line, fpr_line].spacing(2);
@@ -1099,33 +1136,33 @@ fn confirm_add_card<'a>(app: &'a App, ch: &'a Channel) -> Element<'a, Message> {
     };
 
     let mut details: Column<'_, Message> = Column::new().spacing(2);
-    details = details.push(line("name", &ch.name));
-    details = details.push(line("url", &ch.url));
+    details = details.push(line(&crate::t!("channels-field-name"), &ch.name));
+    details = details.push(line(&crate::t!("channels-field-url"), &ch.url));
     if let Some(b) = &ch.branch {
-        details = details.push(line("branch", b));
+        details = details.push(line(&crate::t!("channels-field-branch"), b));
     }
     if let Some(c) = &ch.commit {
-        details = details.push(mono_line("commit", c));
+        details = details.push(mono_line(&crate::t!("channels-field-commit"), c));
     }
     if let Some(c) = &ch.introduction_commit {
-        details = details.push(mono_line("intro commit", c));
+        details = details.push(mono_line(&crate::t!("channels-field-intro-commit"), c));
     }
     if let Some(fpr) = &ch.introduction_fingerprint {
-        details = details.push(mono_line("intro fingerprint", fpr));
+        details = details.push(mono_line(&crate::t!("channels-field-intro-fpr"), fpr));
     }
 
     let confirm_tooltip = if !writable {
-        "Set a writable file in Settings"
+        crate::t!("channels-set-writable-tooltip")
     } else {
-        ""
+        String::new()
     };
-    let confirm = button(text("Add channel").size(13))
+    let confirm = button(text(crate::t!("channels-add-btn")).size(13))
         .padding([8, 16])
         .style(styles::btn_secondary)
         .on_press_maybe(
             (writable && !app.channels.saving).then_some(Message::DiscoverAddConfirmed),
         );
-    let cancel = button(text("Cancel").size(13))
+    let cancel = button(text(crate::t!("common-cancel")).size(13))
         .padding([8, 16])
         .style(styles::btn_ghost)
         .on_press(Message::DiscoverAddCancelled);
@@ -1138,29 +1175,27 @@ fn confirm_add_card<'a>(app: &'a App, ch: &'a Channel) -> Element<'a, Message> {
     // Surface the catalog the intro values came from — they decide
     // what `guix pull` trusts going forward.
     let provenance = column![
-        text("Provenance").size(12).color(MUTED),
-        text(format!("Supplied by {}", guix_gui::discovery::TOYS_API))
-            .size(12)
-            .font(Font::MONOSPACE),
+        text(crate::t!("channels-provenance")).size(12).color(MUTED),
+        text(crate::t!(
+            "channels-supplied-by",
+            source = guix_gui::discovery::TOYS_API
+        ))
+        .size(12)
+        .font(Font::MONOSPACE),
     ]
     .spacing(2);
 
-    let trust_warning = text(
-        "Once added, every `guix pull` runs Guile code from this source as you. \
-         Verify the introduction commit and fingerprint below against the \
-         channel's own published values before adding.",
-    )
-    .size(12)
-    .color(styles::WARNING);
+    let trust_warning = text(crate::t!("channels-trust-warning"))
+        .size(12)
+        .color(styles::WARNING);
 
     let body = column![
-        text("Confirm channel add").size(14).font(BOLD),
-        text(
-            "This will append the channel to your channels.scm and validate \
-             the file before saving."
-        )
-        .size(12)
-        .color(MUTED),
+        text(crate::t!("channels-confirm-add-title"))
+            .size(14)
+            .font(BOLD),
+        text(crate::t!("channels-confirm-add-blurb"))
+            .size(12)
+            .color(MUTED),
         Space::new().height(6),
         provenance,
         Space::new().height(4),

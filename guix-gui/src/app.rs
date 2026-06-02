@@ -25,9 +25,6 @@ use crate::terminal_buffer::TerminalBuffer;
 use crate::views::{about, channels as channels_view, home, installed, search, system, updates};
 use guix_gui::discovery::{DiscoveredChannel, DiscoveredPackage, Discovery, DiscoveryError};
 
-pub const CANCEL_PKEXEC_TOOLTIP: &str =
-    "Cannot cancel privileged operations — the kernel doesn't allow signaling root-owned processes. Wait for it to complete.";
-
 pub const BOOTSTRAP_HINT_PATTERN: &str = "no code for module";
 
 #[must_use]
@@ -41,19 +38,7 @@ pub fn bootstrap_help_message(
     let cfg = source_config_path
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "<set source config>".into());
-    let mut s = String::new();
-    s.push_str("Reconfigure failed: the running system Guix doesn't recognise a module your\n");
-    s.push_str("config imports. This usually means a channel updated after your last\n");
-    s.push_str("reconfigure and the new module isn't baked into the system Guix yet.\n");
-    s.push('\n');
-    s.push_str("Bootstrap once manually:\n");
-    s.push('\n');
-    s.push_str(&format!(
-        "    sudo guix system reconfigure -L {load} {cfg}\n"
-    ));
-    s.push('\n');
-    s.push_str("After that, this button will work for subsequent updates.");
-    s
+    crate::t!("app-bootstrap-help", load = load, cfg = cfg)
 }
 
 pub struct App {
@@ -291,6 +276,8 @@ pub enum Message {
     AppMetadataEnabledToggled(bool),
     AppMetadataFlathubToggled(bool),
     AppMetadataDebianToggled(bool),
+    /// `None` follows the system locale; `Some(tag)` is a BCP-47 override.
+    LanguageSelected(Option<String>),
     LightboxOpened(Carrier<Vec<u8>>),
     LightboxClosed,
     OpenUrl(String),
@@ -393,7 +380,7 @@ impl App {
     }
 
     pub fn title(&self) -> String {
-        "Guix GUI".into()
+        crate::t!("app-title")
     }
 
     pub fn theme(&self) -> Theme {
@@ -636,8 +623,7 @@ impl App {
             }
             Message::ReconfigureClicked => {
                 let Some(path) = self.settings.source_config_path.clone() else {
-                    self.system.validation_message =
-                        Some("Set the source config path on the System tab first.".into());
+                    self.system.validation_message = Some(crate::t!("app-set-source-config-first"));
                     self.active_tab = Tab::System;
                     return Task::none();
                 };
@@ -692,13 +678,13 @@ impl App {
             Message::SourceConfigValidate => {
                 let p = PathBuf::from(self.system.source_input.trim());
                 self.system.validation_message = Some(if p.as_os_str().is_empty() {
-                    "Path is empty.".into()
+                    crate::t!("system-validation-empty")
                 } else if !p.exists() {
-                    format!("Path does not exist: {}", p.display())
+                    crate::t!("system-validation-missing", path = p.display().to_string())
                 } else if !p.is_file() {
-                    format!("Path is not a regular file: {}", p.display())
+                    crate::t!("system-validation-not-file", path = p.display().to_string())
                 } else {
-                    format!("OK: {}", p.display())
+                    crate::t!("system-validation-ok", path = p.display().to_string())
                 });
                 Task::none()
             }
@@ -812,7 +798,7 @@ impl App {
                 self.channels.file = Some(load.file);
                 self.channels.backup_path = load.backup_path;
                 self.channels.error = None;
-                self.channels.last_message = Some("Restored from backup.".into());
+                self.channels.last_message = Some(crate::t!("channels-restored"));
                 Task::none()
             }
             Message::ChannelsRestoreCompleted(Err(e)) => {
@@ -869,11 +855,10 @@ impl App {
                 if let Some(name) = pkg {
                     self.channels.post_apply_install_prompt = Some(name.clone());
                     self.channels.last_message =
-                        Some(format!("Channel added. Pull, then install {name}?"));
+                        Some(crate::t!("channels-added-install-prompt", pkg = name));
                 } else {
                     self.channels.post_apply_install_prompt = None;
-                    self.channels.last_message =
-                        Some("Channels updated. Pull now to fetch the new catalog.".into());
+                    self.channels.last_message = Some(crate::t!("channels-updated"));
                 }
                 Task::none()
             }
@@ -906,6 +891,14 @@ impl App {
                 Task::none()
             }
 
+            Message::LanguageSelected(tag) => {
+                self.settings.language = tag;
+                let _ = self.settings.save();
+                crate::i18n::select_language(&crate::i18n::requested_languages(
+                    self.settings.language.as_deref(),
+                ));
+                Task::none()
+            }
             Message::DiscoveryEnabledToggled(v) => {
                 self.settings.discovery_enabled = v;
                 let _ = self.settings.save();
@@ -1099,7 +1092,7 @@ impl App {
                 // than continuing to show whatever was loaded this session.
                 self.home_icons.clear();
                 self.metadata_cache.clear();
-                self.system.cache_action_message = Some("Clearing cache...".into());
+                self.system.cache_action_message = Some(crate::t!("system-clearing-cache"));
                 // Replacing the client also drops its in-memory Flathub
                 // index — otherwise the next fetch would skip the
                 // network and miss the chance to pick up a refreshed ID
@@ -1120,8 +1113,8 @@ impl App {
             }
             Message::MetadataCacheCleared(result) => {
                 self.system.cache_action_message = Some(match result {
-                    Ok(()) => "Cache cleared.".into(),
-                    Err(e) => format!("Failed to clear cache: {e}"),
+                    Ok(()) => crate::t!("system-cache-cleared"),
+                    Err(e) => crate::t!("system-cache-clear-failed", error = e),
                 });
                 // If we're on Home with metadata enabled, repopulate the
                 // tile icons so the cleared state isn't visible as
@@ -1225,7 +1218,7 @@ impl App {
                 Task::none()
             }
             Message::OpStartFailed(e) => {
-                self.system.validation_message = Some(format!("Failed to start op: {e}"));
+                self.system.validation_message = Some(crate::t!("app-op-start-failed", error = e));
                 Task::none()
             }
             Message::Progress(OpEvent::Progress(batch)) => {
@@ -1548,13 +1541,13 @@ impl App {
             return Task::none();
         };
         let Some(file) = self.channels.file.clone() else {
-            self.channels.error = Some("No channels.scm loaded; refresh the tab first.".into());
+            self.channels.error = Some(crate::t!("channels-no-file-loaded"));
             return Task::none();
         };
         if !file.is_writable() {
-            self.channels.error = Some(format!(
-                "channels.scm at {} is store-managed. Set a writable source-path override in Settings.",
-                file.path.display()
+            self.channels.error = Some(crate::t!(
+                "channels-store-managed-error",
+                path = file.path.display().to_string()
             ));
             return Task::none();
         }
@@ -1590,17 +1583,17 @@ impl App {
     /// silently no-op. See TODO.md "channels UX polish".
     fn spawn_channels_restore(&mut self) -> Task<Message> {
         let Some(file) = self.channels.file.clone() else {
-            self.channels.error = Some("No channels.scm loaded; refresh the tab first.".into());
+            self.channels.error = Some(crate::t!("channels-no-file-loaded"));
             return Task::none();
         };
         let Some(bak) = self.channels.backup_path.clone() else {
-            self.channels.error = Some("No backup file present.".into());
+            self.channels.error = Some(crate::t!("channels-no-backup"));
             return Task::none();
         };
         if !file.is_writable() {
-            self.channels.error = Some(format!(
-                "channels.scm at {} is store-managed. Set a writable source-path override in Settings.",
-                file.path.display()
+            self.channels.error = Some(crate::t!(
+                "channels-store-managed-error",
+                path = file.path.display().to_string()
             ));
             return Task::none();
         }
@@ -1619,8 +1612,8 @@ impl App {
                     Ok(())
                 })
                 .await
-                .map_err(|e| format!("restore task panicked: {e}"))?
-                .map_err(|e| format!("restore failed: {e}"))?;
+                .map_err(|e| crate::t!("app-restore-panicked", detail = format!("{e}")))?
+                .map_err(|e| crate::t!("app-restore-failed", detail = format!("{e}")))?;
                 outcome_to_result(load_channels_file(path_override).await)
             },
             Message::ChannelsRestoreCompleted,
@@ -1647,7 +1640,10 @@ impl App {
                 Some(d)
             }
             Err(e) => {
-                self.channels.discover_error = Some(format!("discovery client failed: {e}"));
+                self.channels.discover_error = Some(crate::t!(
+                    "app-discovery-client-failed",
+                    detail = format!("{e}")
+                ));
                 None
             }
         }
@@ -1748,7 +1744,7 @@ impl App {
         if let Some(err) = &self.discovery_error {
             return container(
                 column![
-                    text("Failed to discover guix").size(24),
+                    text(crate::t!("app-discover-failed")).size(24),
                     text(err.clone()).size(14),
                 ]
                 .spacing(12)
@@ -1760,7 +1756,7 @@ impl App {
             .into();
         }
         if self.guix.is_none() {
-            return container(text("Discovering guix...").size(20))
+            return container(text(crate::t!("app-discovering")).size(20))
                 .center_x(Length::Fill)
                 .center_y(Length::Fill)
                 .into();
@@ -1798,12 +1794,12 @@ impl App {
     fn view_lightbox<'a>(&'a self, bytes: &'a [u8]) -> Element<'a, Message> {
         use iced::widget::image as iced_image;
         if !crate::app_metadata::is_supported_image(bytes) {
-            let close_btn = button(text("Close (Esc)").size(13))
+            let close_btn = button(text(crate::t!("app-lightbox-close")).size(13))
                 .padding([8, 16])
                 .style(styles::btn_secondary)
                 .on_press(Message::LightboxClosed);
             let header = row![Space::new().width(Length::Fill), close_btn].padding(12);
-            let msg = container(text("no image / failed").size(14))
+            let msg = container(text(crate::t!("app-lightbox-no-image")).size(14))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .center_x(Length::Fill)
@@ -1820,7 +1816,7 @@ impl App {
             .height(Length::Fill)
             .content_fit(iced::ContentFit::Contain);
 
-        let close_btn = button(text("Close (Esc)").size(13))
+        let close_btn = button(text(crate::t!("app-lightbox-close")).size(13))
             .padding([8, 16])
             .style(styles::btn_secondary)
             .on_press(Message::LightboxClosed);
@@ -1879,9 +1875,15 @@ impl App {
         .width(Length::Fixed(32.0))
         .height(Length::Fixed(32.0));
         let brand = container(
-            row![icon, text("Guix").size(18).font(styles::BOLD).color(TEXT),]
-                .spacing(10)
-                .align_y(Alignment::Center),
+            row![
+                icon,
+                text(crate::t!("app-brand"))
+                    .size(18)
+                    .font(styles::BOLD)
+                    .color(TEXT),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
         )
         .padding(iced::Padding {
             top: 8.0,
@@ -1915,10 +1917,10 @@ impl App {
     /// Reusable page header — title on the left, optional action(s) on the
     /// right. Views call this to keep the header treatment consistent.
     pub(crate) fn view_header<'a>(
-        title: &'a str,
+        title: impl Into<String>,
         action: Option<Element<'a, Message>>,
     ) -> Element<'a, Message> {
-        let title_widget = text(title).size(24).color(TEXT);
+        let title_widget = text(title.into()).size(24).color(TEXT);
         let mut header_row = row![title_widget, Space::new().width(Length::Fill)]
             .align_y(Alignment::Center)
             .spacing(8);
@@ -1940,7 +1942,7 @@ impl App {
     }
 
     fn view_overlay_log<'a>(&'a self, op: &'a ActiveOp) -> Element<'a, Message> {
-        let title = format!("{} (op #{})", op.kind.label(), op.id.0);
+        let title = crate::t!("app-op-title", label = op.kind.label(), id = op.id.0);
 
         let mut log_lines: Column<'_, Message> = Column::new().spacing(0);
         for row in self.terminal.rows() {
@@ -1957,20 +1959,22 @@ impl App {
             } else {
                 None
             };
-            let cancel_btn = button(text("Cancel")).on_press_maybe(on_press);
+            let cancel_btn = button(text(crate::t!("common-cancel"))).on_press_maybe(on_press);
             let cancel_element: Element<'_, Message> = if supports_cancel {
                 cancel_btn.into()
             } else {
                 tooltip(
                     cancel_btn,
-                    container(text(CANCEL_PKEXEC_TOOLTIP))
+                    container(text(crate::t!("app-cancel-pkexec-tooltip")))
                         .padding(6)
                         .style(container::rounded_box),
                     tooltip::Position::Top,
                 )
                 .into()
             };
-            footer = footer.push(cancel_element).push(text("Running..."));
+            footer = footer
+                .push(cancel_element)
+                .push(text(crate::t!("app-running")));
         } else if self.show_bootstrap_help() {
             // Iced's default text shaper swallows `\n` — render per-line via Column.
             let help = bootstrap_help_message(
@@ -1984,26 +1988,26 @@ impl App {
                 help_col = help_col.push(line);
             }
             footer = footer
-                .push(button(text("Close")).on_press(Message::DismissOverlay))
+                .push(button(text(crate::t!("common-close"))).on_press(Message::DismissOverlay))
                 .push(help_col);
         } else {
             let summary = match op.final_code {
-                Some(0) => "Done.".to_string(),
-                Some(code) => format!("Failed (exit {code})."),
-                None => "Ended without exit summary.".to_string(),
+                Some(0) => crate::t!("app-done"),
+                Some(code) => crate::t!("app-failed-exit", code = code),
+                None => crate::t!("app-ended-no-summary"),
             };
             footer = footer
-                .push(button(text("Close")).on_press(Message::DismissOverlay))
+                .push(button(text(crate::t!("common-close"))).on_press(Message::DismissOverlay))
                 .push(text(summary));
         }
         let log_label = if self.show_log {
-            "Hide log"
+            crate::t!("app-hide-log")
         } else {
-            "Show log"
+            crate::t!("app-show-log")
         };
         footer = footer
             .push(Space::new().width(Length::Fill))
-            .push(button(text("Copy")).on_press(Message::CopyTerminalClicked))
+            .push(button(text(crate::t!("app-copy"))).on_press(Message::CopyTerminalClicked))
             .push(button(text(log_label)).on_press(Message::ToggleLog));
 
         container(
@@ -2064,7 +2068,7 @@ pub(crate) fn build_search_error(details: String) -> SearchError {
                 .unwrap_or(l)
                 .to_string()
         })
-        .unwrap_or_else(|| "Search failed.".to_string());
+        .unwrap_or_else(|| crate::t!("search-failed"));
     let summary = if summary.chars().count() > SEARCH_ERROR_SUMMARY_CAP {
         let mut s: String = summary.chars().take(SEARCH_ERROR_SUMMARY_CAP - 1).collect();
         s.push('\u{2026}');

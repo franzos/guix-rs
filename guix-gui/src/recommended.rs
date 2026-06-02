@@ -18,15 +18,15 @@ pub enum Category {
 }
 
 impl Category {
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Category::Graphics => "Graphics",
-            Category::AudioVideo => "Audio & Video",
-            Category::Office => "Office",
-            Category::Development => "Development",
-            Category::Engineering => "Engineering",
-            Category::Internet => "Internet",
-            Category::Game => "Games",
+            Category::Graphics => crate::t!("category-graphics"),
+            Category::AudioVideo => crate::t!("category-audio-video"),
+            Category::Office => crate::t!("category-office"),
+            Category::Development => crate::t!("category-development"),
+            Category::Engineering => crate::t!("category-engineering"),
+            Category::Internet => crate::t!("category-internet"),
+            Category::Game => crate::t!("category-game"),
         }
     }
 
@@ -44,6 +44,7 @@ impl Category {
     }
 }
 
+/// Curated `name`/`blurb` ship in English only by design; they are not translated.
 pub struct RecommendedApp {
     /// Exact Guix package name — used as the search key and the install target.
     pub name: &'static str,

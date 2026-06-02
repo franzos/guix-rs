@@ -1,27 +1,47 @@
-use iced::widget::{button, checkbox, column, container, row, scrollable, text, text_input, Space};
+use iced::widget::{
+    button, checkbox, column, container, pick_list, row, scrollable, text, text_input, Space,
+};
 use iced::{Element, Length};
+use unic_langid::LanguageIdentifier;
 
 use crate::app::{App, Message};
 use crate::settings::Tab;
 use crate::styles::{self, BOLD, MUTED};
 
+/// One entry in the language picker. `System` follows the OS locale;
+/// `Locale` pins a specific embedded catalogue.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LangChoice {
+    System,
+    Locale(LanguageIdentifier),
+}
+
+impl std::fmt::Display for LangChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LangChoice::System => f.write_str(&crate::t!("settings-language-system")),
+            LangChoice::Locale(id) => write!(f, "{id}"),
+        }
+    }
+}
+
 pub fn view(app: &App) -> Element<'_, Message> {
-    let header = App::view_header("Settings", None);
+    let header = App::view_header(crate::t!("system-title"), None);
 
     // -- SYSTEM section --
     let current_label: Element<'_, Message> = match (
         &app.system.current_config_display,
         &app.system.current_config_error,
     ) {
-        (Some(p), _) => text(format!("Current system config: {p}"))
+        (Some(p), _) => text(crate::t!("system-current-config", path = p.clone()))
             .size(13)
             .color(MUTED)
             .into(),
-        (_, Some(e)) => text(format!("Not on Guix System: {e}"))
+        (_, Some(e)) => text(crate::t!("system-not-guix", error = e.clone()))
             .size(13)
             .color(MUTED)
             .into(),
-        _ => text("Checking current system config...")
+        _ => text(crate::t!("system-checking-config"))
             .size(13)
             .color(MUTED)
             .into(),
@@ -30,12 +50,9 @@ pub fn view(app: &App) -> Element<'_, Message> {
     let banner: Option<Element<'_, Message>> = if app.settings.source_config_path.is_none() {
         Some(
             container(
-                text(
-                    "No system configuration file detected at /etc/config.scm or \
-                     /etc/system.scm. Enter the path to your .scm configuration below.",
-                )
-                .size(12)
-                .color(MUTED),
+                text(crate::t!("system-no-config-banner"))
+                    .size(12)
+                    .color(MUTED),
             )
             .padding(10)
             .style(styles::card_flat)
@@ -45,7 +62,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
         None
     };
 
-    let validate_btn = button(text("Validate").size(13))
+    let validate_btn = button(text(crate::t!("system-validate")).size(13))
         .padding([8, 16])
         .style(styles::btn_secondary)
         .on_press(Message::SourceConfigValidate);
@@ -56,16 +73,17 @@ pub fn view(app: &App) -> Element<'_, Message> {
             .into();
 
     let source_content = column![
-        text("System config").size(16).font(BOLD),
-        text("Path to your editable .scm system configuration.")
-            .size(12)
-            .color(MUTED),
+        text(crate::t!("system-config-heading")).size(16).font(BOLD),
+        text(crate::t!("system-config-blurb")).size(12).color(MUTED),
         Space::new().height(4),
-        text_input("/home/you/dotfiles/config.scm", &app.system.source_input)
-            .on_input(Message::SourceConfigChanged)
-            .padding(8)
-            .size(13)
-            .width(Length::Fill),
+        text_input(
+            &crate::t!("system-config-placeholder"),
+            &app.system.source_input
+        )
+        .on_input(Message::SourceConfigChanged)
+        .padding(8)
+        .size(13)
+        .width(Length::Fill),
         Space::new().height(4),
         row![validate_btn, validation]
             .spacing(12)
@@ -83,15 +101,17 @@ pub fn view(app: &App) -> Element<'_, Message> {
     // the SYSTEM section below the system-config card.
     let auto = app.auto_load_path();
     let auto_line = text(match &auto {
-        Some(p) => format!("Auto: {}", p.display()),
-        None => "Auto: (set system config above)".into(),
+        Some(p) => crate::t!("system-load-paths-auto", path = p.display().to_string()),
+        None => crate::t!("system-load-paths-auto-unset"),
     })
     .size(12)
     .color(MUTED);
 
     let mut load_paths_inner = column![
-        text("Extra load paths").size(16).font(BOLD),
-        text("Additional directories to search when resolving Scheme imports.")
+        text(crate::t!("system-load-paths-heading"))
+            .size(16)
+            .font(BOLD),
+        text(crate::t!("system-load-paths-blurb"))
             .size(12)
             .color(MUTED),
         Space::new().height(4),
@@ -100,7 +120,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
     .spacing(4);
 
     for (i, p) in app.settings.custom_load_paths.iter().enumerate() {
-        let remove_btn = button(text("Remove").size(11))
+        let remove_btn = button(text(crate::t!("common-remove")).size(11))
             .padding([4, 10])
             .style(styles::btn_ghost)
             .on_press(Message::LoadPathRemove(i));
@@ -115,18 +135,21 @@ pub fn view(app: &App) -> Element<'_, Message> {
         );
     }
 
-    let add_btn = button(text("+ Add").size(13))
+    let add_btn = button(text(crate::t!("system-add")).size(13))
         .padding([8, 16])
         .style(styles::btn_secondary)
         .on_press(Message::LoadPathAdd);
     load_paths_inner = load_paths_inner.push(
         row![
-            text_input("/path/to/extra/modules", &app.system.load_path_input)
-                .on_input(Message::LoadPathInputChanged)
-                .on_submit(Message::LoadPathAdd)
-                .padding(8)
-                .size(13)
-                .width(Length::Fill),
+            text_input(
+                &crate::t!("system-load-paths-placeholder"),
+                &app.system.load_path_input
+            )
+            .on_input(Message::LoadPathInputChanged)
+            .on_submit(Message::LoadPathAdd)
+            .padding(8)
+            .size(13)
+            .width(Length::Fill),
             add_btn,
         ]
         .spacing(8),
@@ -137,7 +160,43 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .width(Length::Fill)
         .style(styles::card);
 
-    let mut system_section = column![text("SYSTEM").size(12).color(MUTED)].spacing(8);
+    // Language picker — selecting an option re-localises the UI live
+    // because `view()` re-evaluates every `t!` on each render.
+    let mut lang_options = vec![LangChoice::System];
+    lang_options.extend(
+        crate::i18n::available_locales()
+            .into_iter()
+            .map(LangChoice::Locale),
+    );
+    let selected = match app.settings.language.as_deref() {
+        Some(tag) => tag
+            .parse::<LanguageIdentifier>()
+            .ok()
+            .map(LangChoice::Locale)
+            .unwrap_or(LangChoice::System),
+        None => LangChoice::System,
+    };
+    let lang_picker = pick_list(lang_options, Some(selected), |choice| match choice {
+        LangChoice::System => Message::LanguageSelected(None),
+        LangChoice::Locale(id) => Message::LanguageSelected(Some(id.to_string())),
+    })
+    .padding(8)
+    .text_size(13);
+    let language_inner = column![
+        text(crate::t!("settings-language")).size(16).font(BOLD),
+        Space::new().height(4),
+        lang_picker,
+    ]
+    .spacing(4);
+    let language_card = container(language_inner)
+        .padding(20)
+        .width(Length::Fill)
+        .style(styles::card);
+
+    let mut system_section = column![text(crate::t!("system-section-system"))
+        .size(12)
+        .color(MUTED)]
+    .spacing(8);
     system_section = system_section.push(
         container(current_label)
             .padding(20)
@@ -147,6 +206,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
     if let Some(b) = banner {
         system_section = system_section.push(b);
     }
+    system_section = system_section.push(language_card);
     system_section = system_section.push(source_card);
     system_section = system_section.push(load_paths_card);
 
@@ -159,23 +219,22 @@ pub fn view(app: &App) -> Element<'_, Message> {
         Some(f) => {
             let count = f.list.channels().len();
             if count == 0 {
-                "No channels configured.".to_string()
+                crate::t!("system-channels-none")
             } else {
-                format!(
-                    "{count} channel{} configured.",
-                    if count == 1 { "" } else { "s" }
-                )
+                crate::t!("system-channels-configured", count = count)
             }
         }
-        None => "Channels configured: —".to_string(),
+        None => crate::t!("system-channels-unknown"),
     };
-    let open_channels = button(text("Open Channels tab").size(13))
+    let open_channels = button(text(crate::t!("system-open-channels")).size(13))
         .padding([8, 16])
         .style(styles::btn_secondary)
         .on_press(Message::TabSelected(Tab::Channels));
     let channels_inner = column![
-        text("Channels").size(16).font(BOLD),
-        text("Manage user-level channels in the dedicated tab.")
+        text(crate::t!("system-channels-heading"))
+            .size(16)
+            .font(BOLD),
+        text(crate::t!("system-channels-blurb"))
             .size(12)
             .color(MUTED),
         Space::new().height(4),
@@ -196,23 +255,22 @@ pub fn view(app: &App) -> Element<'_, Message> {
         } else {
             None
         };
-        button(text("Use default").size(12))
+        button(text(crate::t!("system-use-default")).size(12))
             .padding([6, 12])
             .style(styles::btn_ghost)
             .on_press_maybe(on_press)
     };
     let channels_source_inner = column![
-        text("User channels source path").size(16).font(BOLD),
-        text(
-            "Override for ~/.config/guix/channels.scm. Required when the \
-             default path is managed by `guix home` (resolves into /gnu/store)."
-        )
-        .size(12)
-        .color(MUTED),
+        text(crate::t!("system-channels-source-heading"))
+            .size(16)
+            .font(BOLD),
+        text(crate::t!("system-channels-source-blurb"))
+            .size(12)
+            .color(MUTED),
         Space::new().height(4),
         row![
             text_input(
-                "/home/you/dotfiles/channels.scm (leave empty for default)",
+                &crate::t!("system-channels-source-placeholder"),
                 &app.system.channels_source_input,
             )
             .on_input(Message::ChannelsSourcePathChanged)
@@ -231,7 +289,9 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .style(styles::card);
 
     let channels_section = column![
-        text("USER CHANNELS").size(12).color(MUTED),
+        text(crate::t!("system-section-user-channels"))
+            .size(12)
+            .color(MUTED),
         container(channels_inner)
             .padding(20)
             .width(Length::Fill)
@@ -244,7 +304,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
     let meta = &app.settings.app_metadata;
     let sub_enabled = meta.enabled;
 
-    let labeled_check = |label: &'static str,
+    let labeled_check = |label: String,
                          checked: bool,
                          enabled: bool,
                          on_toggle: fn(bool) -> Message|
@@ -260,16 +320,19 @@ pub fn view(app: &App) -> Element<'_, Message> {
     };
 
     let cache_path_hint: Element<'_, Message> = match app.metadata_client.cache_root() {
-        Some(p) => text(format!("Cache directory: {}", p.display()))
-            .size(11)
-            .color(MUTED)
-            .into(),
-        None => text("Cache directory: (no XDG cache dir found — using in-memory only)")
+        Some(p) => text(crate::t!(
+            "system-cache-dir",
+            path = p.display().to_string()
+        ))
+        .size(11)
+        .color(MUTED)
+        .into(),
+        None => text(crate::t!("system-cache-dir-none"))
             .size(11)
             .color(MUTED)
             .into(),
     };
-    let clear_btn = button(text("Clear cache").size(13))
+    let clear_btn = button(text(crate::t!("system-clear-cache")).size(13))
         .padding([8, 16])
         .style(styles::btn_secondary)
         .on_press(Message::ClearMetadataCacheClicked);
@@ -280,38 +343,35 @@ pub fn view(app: &App) -> Element<'_, Message> {
             .into();
 
     let metadata_inner = column![
-        text("Icons & screenshots").size(16).font(BOLD),
-        text(
-            "Fetch icons and screenshots from third-party catalogs for selected \
-             search results. Opt-in; requires network access."
-        )
-        .size(12)
-        .color(MUTED),
+        text(crate::t!("system-metadata-heading"))
+            .size(16)
+            .font(BOLD),
+        text(crate::t!("system-metadata-blurb"))
+            .size(12)
+            .color(MUTED),
         Space::new().height(4),
         labeled_check(
-            "Enable third-party metadata",
+            crate::t!("system-metadata-enable"),
             meta.enabled,
             true,
             Message::AppMetadataEnabledToggled,
         ),
         Space::new().height(4),
         labeled_check(
-            "Flathub (flathub.org)",
+            crate::t!("system-metadata-flathub"),
             meta.use_flathub,
             sub_enabled,
             Message::AppMetadataFlathubToggled,
         ),
         labeled_check(
-            "screenshots.debian.net",
+            crate::t!("system-metadata-debian"),
             meta.use_debian_screenshots,
             sub_enabled,
             Message::AppMetadataDebianToggled,
         ),
         Space::new().height(8),
-        text("Cache").size(13).font(BOLD),
-        text("Icons and screenshots are saved on disk for up to a year. Clear it if an icon looks wrong upstream.")
-            .size(12)
-            .color(MUTED),
+        text(crate::t!("system-cache-heading")).size(13).font(BOLD),
+        text(crate::t!("system-cache-blurb")).size(12).color(MUTED),
         cache_path_hint,
         Space::new().height(4),
         row![clear_btn, cache_feedback]
@@ -329,19 +389,18 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .on_toggle(Message::DiscoveryEnabledToggled)
         .size(16);
     let discovery_inner = column![
-        text("Discovery").size(16).font(BOLD),
+        text(crate::t!("system-discovery-heading"))
+            .size(16)
+            .font(BOLD),
         row![
             discovery_check,
-            text("Browse channels and packages from toys.whereis.social").size(14),
+            text(crate::t!("system-discovery-toggle")).size(14),
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center),
-        text(
-            "Opt-in. Requires network access. When off, discovery does not \
-             appear anywhere in the app."
-        )
-        .size(12)
-        .color(MUTED),
+        text(crate::t!("system-discovery-blurb"))
+            .size(12)
+            .color(MUTED),
     ]
     .spacing(4);
     let discovery_card = container(discovery_inner)
@@ -350,7 +409,9 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .style(styles::card);
 
     let metadata_section = column![
-        text("METADATA").size(12).color(MUTED),
+        text(crate::t!("system-section-metadata"))
+            .size(12)
+            .color(MUTED),
         container(metadata_inner)
             .padding(20)
             .width(Length::Fill)

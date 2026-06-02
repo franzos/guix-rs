@@ -108,13 +108,13 @@ impl AddChannelForm {
         let intro_commit = self.intro_commit.trim();
         let intro_fpr = self.intro_fpr.trim();
         if name.is_empty() {
-            return Err("Name is required.".into());
+            return Err(crate::t!("channels-form-name-required"));
         }
         if url.is_empty() {
-            return Err("URL is required.".into());
+            return Err(crate::t!("channels-form-url-required"));
         }
         if intro_commit.is_empty() || intro_fpr.is_empty() {
-            return Err("Introduction commit and fingerprint are required.".into());
+            return Err(crate::t!("channels-form-intro-required"));
         }
         let opt = |s: &String| {
             let t = s.trim();
@@ -144,9 +144,7 @@ pub fn describe_channels_error(e: &ChannelsError) -> String {
 pub fn outcome_to_result(o: ChannelsFileLoadOutcome) -> Result<ChannelsFileLoad, String> {
     match o {
         ChannelsFileLoadOutcome::Loaded(load) => Ok(load),
-        ChannelsFileLoadOutcome::Missing => {
-            Err("channels.scm vanished after write — refresh the tab.".into())
-        }
+        ChannelsFileLoadOutcome::Missing => Err(crate::t!("channels-vanished-after-write")),
         ChannelsFileLoadOutcome::Failed(e) => Err(e),
     }
 }

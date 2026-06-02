@@ -23,14 +23,14 @@ pub enum OpKind {
 }
 
 impl OpKind {
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            OpKind::Install => "Installing",
-            OpKind::Remove => "Removing",
-            OpKind::Upgrade => "Upgrading user packages",
-            OpKind::Pull => "Fetching user catalog",
-            OpKind::SystemPull => "Fetching system catalog",
-            OpKind::Reconfigure => "Reconfiguring system",
+            OpKind::Install => crate::t!("op-install"),
+            OpKind::Remove => crate::t!("op-remove"),
+            OpKind::Upgrade => crate::t!("op-upgrade"),
+            OpKind::Pull => crate::t!("op-pull"),
+            OpKind::SystemPull => crate::t!("op-system-pull"),
+            OpKind::Reconfigure => crate::t!("op-reconfigure"),
         }
     }
 }

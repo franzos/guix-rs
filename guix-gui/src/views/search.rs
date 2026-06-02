@@ -12,16 +12,16 @@ use crate::styles::{self, BOLD, MUTED};
 const SYNOPSIS_CHAR_LIMIT: usize = 120;
 
 pub fn view(app: &App) -> Element<'_, Message> {
-    let header = App::view_header("Search", None);
+    let header = App::view_header(crate::t!("search-title"), None);
 
-    let input = text_input("Search packages...", &app.search.query)
+    let input = text_input(&crate::t!("search-placeholder"), &app.search.query)
         .on_input(Message::SearchInputChanged)
         .padding(10)
         .size(14)
         .width(Length::Fill);
 
     let warmup_hint: Element<'_, Message> = if !app.warmup_done {
-        text("Loading package catalog...")
+        text(crate::t!("search-loading-catalog"))
             .size(11)
             .color(MUTED)
             .into()
@@ -30,20 +30,27 @@ pub fn view(app: &App) -> Element<'_, Message> {
     };
 
     let status: Element<'_, Message> = if app.search.searching {
-        text("Searching...").size(12).color(MUTED).into()
-    } else if app.search.error.is_some() {
-        text("").size(12).into()
-    } else {
-        text(format!("{} results", app.search.results.len()))
+        text(crate::t!("search-searching"))
             .size(12)
             .color(MUTED)
             .into()
+    } else if app.search.error.is_some() {
+        text("").size(12).into()
+    } else {
+        text(crate::t!(
+            "search-results",
+            count = app.search.results.len()
+        ))
+        .size(12)
+        .color(MUTED)
+        .into()
     };
 
     let truncated_hint: Element<'_, Message> = if app.search.truncated {
-        text(format!(
-            "Showing first {n} of \u{2265}{n} matches; refine your query.",
-            n = app.search.last_limit
+        text(crate::t!(
+            "search-truncated",
+            shown = app.search.last_limit,
+            total = app.search.last_limit
         ))
         .size(11)
         .color(MUTED)
@@ -90,12 +97,12 @@ pub fn view(app: &App) -> Element<'_, Message> {
 }
 
 fn search_error_banner(err: &SearchError) -> Element<'_, Message> {
-    let label = text("Search error:")
+    let label = text(crate::t!("search-error-label"))
         .size(12)
         .font(BOLD)
         .color(styles::DANGER);
     let summary = text(err.summary.clone()).size(12);
-    let copy = button(text("Copy details").size(12))
+    let copy = button(text(crate::t!("search-copy-details")).size(12))
         .padding([6, 12])
         .style(styles::btn_ghost)
         .on_press(Message::SearchErrorCopy);
@@ -130,13 +137,13 @@ fn result_list(results: &[PackageSummary], selected: Option<usize>) -> Element<'
 
 fn detail_pane(app: &App) -> Element<'_, Message> {
     let Some(i) = app.search.selected else {
-        return text("Select a package to see details.")
+        return text(crate::t!("search-select-prompt"))
             .size(14)
             .color(MUTED)
             .into();
     };
     let Some(p) = app.search.results.get(i) else {
-        return text("Select a package to see details.")
+        return text(crate::t!("search-select-prompt"))
             .size(14)
             .color(MUTED)
             .into();
@@ -174,21 +181,24 @@ fn detail_pane(app: &App) -> Element<'_, Message> {
             .style(styles::btn_ghost)
             .on_press(Message::OpenUrl(p.homepage.clone()));
         col = col.push(
-            row![text("homepage:").size(12).color(MUTED), link,]
-                .spacing(6)
-                .align_y(iced::Alignment::Center),
+            row![
+                text(crate::t!("search-homepage")).size(12).color(MUTED),
+                link,
+            ]
+            .spacing(6)
+            .align_y(iced::Alignment::Center),
         );
     }
     if !p.license.is_empty() {
         col = col.push(
-            text(format!("license: {}", p.license))
+            text(crate::t!("search-license", license = p.license.clone()))
                 .size(12)
                 .color(MUTED),
         );
     }
     if !p.outputs.is_empty() {
         col = col.push(
-            text(format!("outputs: {}", p.outputs.join(", ")))
+            text(crate::t!("search-outputs", outputs = p.outputs.join(", ")))
                 .size(12)
                 .color(MUTED),
         );
@@ -198,13 +208,13 @@ fn detail_pane(app: &App) -> Element<'_, Message> {
     let busy = app.active_op.is_some();
     let action_btn = if already_installed {
         let msg = (!busy).then(|| Message::RemoveRequested(p.name.clone()));
-        button(text("Remove").size(13))
+        button(text(crate::t!("search-remove")).size(13))
             .padding([8, 20])
             .style(styles::btn_danger)
             .on_press_maybe(msg)
     } else {
         let msg = (!busy).then(|| Message::InstallRequested(p.name.clone()));
-        button(text("Install").size(13))
+        button(text(crate::t!("search-install")).size(13))
             .padding([8, 20])
             .style(styles::btn_primary)
             .on_press_maybe(msg)
@@ -267,8 +277,8 @@ fn screenshots_strip<'a>(
             let attribution = m
                 .flathub
                 .as_ref()
-                .map(|f| format!("Screenshots via Flathub ({})", f.component_id))
-                .unwrap_or_else(|| "Screenshots via screenshots.debian.net".to_string());
+                .map(|f| crate::t!("search-screenshots-flathub", id = f.component_id.clone()))
+                .unwrap_or_else(|| crate::t!("search-screenshots-debian"));
             Some(
                 column![
                     text(attribution).size(11).color(MUTED),
@@ -282,7 +292,7 @@ fn screenshots_strip<'a>(
         }
         Some(_) => None,
         None if cache_present => Some(
-            text("Loading icons / screenshots...")
+            text(crate::t!("search-loading-media"))
                 .size(11)
                 .color(MUTED)
                 .into(),

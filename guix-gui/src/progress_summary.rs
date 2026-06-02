@@ -33,16 +33,16 @@ impl Stage {
         }
     }
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Stage::Starting => "Starting",
-            Stage::ChannelUpdate => "Updating channels",
-            Stage::ComputingDeriv => "Computing derivation",
-            Stage::Downloading => "Downloading",
-            Stage::Building => "Building",
-            Stage::Profile => "Updating profile",
-            Stage::Done => "Done",
-            Stage::Failed => "Failed",
+            Stage::Starting => crate::t!("stage-starting"),
+            Stage::ChannelUpdate => crate::t!("stage-channel-update"),
+            Stage::ComputingDeriv => crate::t!("stage-computing-deriv"),
+            Stage::Downloading => crate::t!("stage-downloading"),
+            Stage::Building => crate::t!("stage-building"),
+            Stage::Profile => crate::t!("stage-profile"),
+            Stage::Done => crate::t!("stage-done"),
+            Stage::Failed => crate::t!("stage-failed"),
         }
     }
 }
@@ -142,8 +142,10 @@ impl ProgressSummary {
                 if *code == 0 {
                     self.advance_to(Stage::Done);
                 } else {
-                    self.failure
-                        .get_or_insert_with(|| format!("Failed (exit {code})"));
+                    if self.failure.is_none() {
+                        let code: i32 = *code;
+                        self.failure = Some(crate::t!("app-failed-exit", code = code));
+                    }
                     self.advance_to(Stage::Failed);
                 }
             }
@@ -196,8 +198,12 @@ impl ProgressSummary {
                 }
                 self.build_count_failed += 1;
                 let msg = match log_path {
-                    Some(p) => format!("Build failed: {} (log: {p})", pretty_store_name(drv)),
-                    None => format!("Build failed: {}", pretty_store_name(drv)),
+                    Some(p) => crate::t!(
+                        "stage-build-failed-log",
+                        name = pretty_store_name(drv),
+                        log = p.clone()
+                    ),
+                    None => crate::t!("stage-build-failed", name = pretty_store_name(drv)),
                 };
                 self.failure.get_or_insert(msg);
                 self.advance_to(Stage::Failed);
@@ -472,7 +478,9 @@ mod tests {
             duration_secs: 2.0,
         });
         assert_eq!(s.stage, Stage::Failed);
-        assert!(s.failure.as_deref().unwrap().contains("exit 1"));
+        let failure = s.failure.as_deref().unwrap();
+        assert!(failure.contains("exit"));
+        assert!(failure.contains('1'));
     }
 
     #[test]

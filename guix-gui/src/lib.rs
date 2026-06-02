@@ -5,3 +5,4 @@
 //! surface (currently: discovery).
 
 pub mod discovery;
+pub mod i18n;

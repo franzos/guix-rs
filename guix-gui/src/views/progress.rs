@@ -3,9 +3,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Font, Length};
 
-use crate::app::{
-    bootstrap_help_message, op_supports_cancel, ActiveOp, App, Message, CANCEL_PKEXEC_TOOLTIP,
-};
+use crate::app::{bootstrap_help_message, op_supports_cancel, ActiveOp, App, Message};
 use crate::progress_summary::{BuildStatus, ProgressSummary, Stage};
 
 pub fn view<'a>(app: &'a App, op: &'a ActiveOp) -> Element<'a, Message> {
@@ -30,7 +28,7 @@ pub fn view<'a>(app: &'a App, op: &'a ActiveOp) -> Element<'a, Message> {
         body = body.push(done);
     }
     if let Some(last) = summary.last_status_line.as_deref() {
-        let hint: Element<'_, Message> = text(format!("Last: {last}"))
+        let hint: Element<'_, Message> = text(crate::t!("progress-last", line = last.to_string()))
             .size(12)
             .style(text::secondary)
             .into();
@@ -57,7 +55,7 @@ pub fn view<'a>(app: &'a App, op: &'a ActiveOp) -> Element<'a, Message> {
 }
 
 fn title_row<'a>(op: &'a ActiveOp, summary: &'a ProgressSummary) -> Element<'a, Message> {
-    let title = format!("{} (op #{})", op.kind.label(), op.id.0);
+    let title = crate::t!("app-op-title", label = op.kind.label(), id = op.id.0);
     let elapsed = summary
         .elapsed()
         .map(format_elapsed)
@@ -73,13 +71,14 @@ fn title_row<'a>(op: &'a ActiveOp, summary: &'a ProgressSummary) -> Element<'a, 
 }
 
 fn stage_row<'a>(summary: &'a ProgressSummary) -> Element<'a, Message> {
-    let counts = format!(
-        "{built}/{started} built, {dl_done}/{dl_started} downloaded ({mb:.1} MB)",
+    let mb = (summary.bytes_downloaded as f64) / (1024.0 * 1024.0);
+    let counts = crate::t!(
+        "progress-counts",
         built = summary.build_count_done,
         started = summary.build_count_started,
         dl_done = summary.download_count_done,
         dl_started = summary.download_count_started,
-        mb = (summary.bytes_downloaded as f64) / (1024.0 * 1024.0),
+        mb = format!("{mb:.1}")
     );
     let header = row![
         text(summary.stage.label()).size(16),
@@ -107,12 +106,15 @@ fn running_builds_section<'a>(summary: &'a ProgressSummary) -> Option<Element<'a
         return None;
     }
     let mut col: Column<'a, Message> = Column::new().spacing(2);
-    col = col.push(text(format!("Running ({}):", running.len())).size(14));
+    col = col.push(text(crate::t!("progress-running", count = running.len())).size(14));
     for b in running {
-        let line: Element<'_, Message> = text(format!("  - {} [building]", b.pretty_name))
-            .size(12)
-            .font(Font::MONOSPACE)
-            .into();
+        let line: Element<'_, Message> = text(crate::t!(
+            "progress-build-line",
+            name = b.pretty_name.clone()
+        ))
+        .size(12)
+        .font(Font::MONOSPACE)
+        .into();
         col = col.push(line);
     }
     Some(col.into())
@@ -127,9 +129,10 @@ fn finished_builds_section<'a>(summary: &'a ProgressSummary) -> Option<Element<'
     if finished.is_empty() {
         return None;
     }
-    let header = format!(
-        "Finished ({} done, {} failed):",
-        summary.build_count_done, summary.build_count_failed
+    let header = crate::t!(
+        "progress-finished",
+        done = summary.build_count_done,
+        failed = summary.build_count_failed
     );
     let mut col: Column<'a, Message> = Column::new().spacing(2);
     col = col.push(text(header).size(14));
@@ -138,21 +141,25 @@ fn finished_builds_section<'a>(summary: &'a ProgressSummary) -> Option<Element<'
     let take_from = total.saturating_sub(3);
     if total > 5 {
         col = col.push(
-            text(format!("  ... and {} more", take_from))
+            text(crate::t!("progress-and-more", count = take_from))
                 .size(12)
                 .style(text::secondary),
         );
     }
     for b in &finished[take_from..] {
-        let marker = match b.status {
+        let status = match b.status {
             BuildStatus::Done => "done",
-            BuildStatus::Failed => "FAILED",
+            BuildStatus::Failed => "failed",
             BuildStatus::Running => "building",
         };
-        let line: Element<'_, Message> = text(format!("  - {} [{}]", b.pretty_name, marker))
-            .size(12)
-            .font(Font::MONOSPACE)
-            .into();
+        let line: Element<'_, Message> = text(crate::t!(
+            "progress-build-item",
+            name = b.pretty_name.clone(),
+            status = status
+        ))
+        .size(12)
+        .font(Font::MONOSPACE)
+        .into();
         col = col.push(line);
     }
     Some(col.into())
@@ -164,7 +171,7 @@ fn downloads_section<'a>(summary: &'a ProgressSummary) -> Option<Element<'a, Mes
         return None;
     }
     let mut col: Column<'a, Message> = Column::new().spacing(4);
-    col = col.push(text(format!("Active downloads ({}):", active.len())).size(14));
+    col = col.push(text(crate::t!("progress-active-downloads", count = active.len())).size(14));
     for d in active {
         let label = match d.bytes_total {
             Some(total) if total > 0 => format!(
@@ -202,12 +209,18 @@ fn finished_downloads_section<'a>(summary: &'a ProgressSummary) -> Option<Elemen
         return None;
     }
     let mut col: Column<'a, Message> = Column::new().spacing(2);
-    col = col.push(text(format!("Completed downloads ({}):", finished.len())).size(14));
+    col = col.push(
+        text(crate::t!(
+            "progress-completed-downloads",
+            count = finished.len()
+        ))
+        .size(14),
+    );
     let total = finished.len();
     let take_from = total.saturating_sub(3);
     if total > 5 {
         col = col.push(
-            text(format!("  ... and {} more", take_from))
+            text(crate::t!("progress-and-more", count = take_from))
                 .size(12)
                 .style(text::secondary),
         );
@@ -252,13 +265,13 @@ fn footer_row<'a>(app: &'a App, op: &'a ActiveOp) -> Element<'a, Message> {
         } else {
             None
         };
-        let cancel_btn = button(text("Cancel")).on_press_maybe(on_press);
+        let cancel_btn = button(text(crate::t!("common-cancel"))).on_press_maybe(on_press);
         let cancel_el: Element<'a, Message> = if supports_cancel {
             cancel_btn.into()
         } else {
             tooltip(
                 cancel_btn,
-                container(text(CANCEL_PKEXEC_TOOLTIP))
+                container(text(crate::t!("app-cancel-pkexec-tooltip")))
                     .padding(6)
                     .style(container::rounded_box),
                 tooltip::Position::Top,
@@ -272,17 +285,21 @@ fn footer_row<'a>(app: &'a App, op: &'a ActiveOp) -> Element<'a, Message> {
         let summary_text = match op.progress.failure.as_deref() {
             Some(msg) => msg.to_string(),
             None => match op.final_code {
-                Some(0) => "Done.".to_string(),
-                Some(code) => format!("Failed (exit {code})."),
-                None => "Ended without exit summary.".to_string(),
+                Some(0) => crate::t!("app-done"),
+                Some(code) => crate::t!("app-failed-exit", code = code),
+                None => crate::t!("app-ended-no-summary"),
             },
         };
         footer = footer
-            .push(button(text("Close")).on_press(Message::DismissOverlay))
+            .push(button(text(crate::t!("common-close"))).on_press(Message::DismissOverlay))
             .push(text(summary_text));
     }
 
-    let log_label = if app.show_log { "Hide log" } else { "Show log" };
+    let log_label = if app.show_log {
+        crate::t!("app-hide-log")
+    } else {
+        crate::t!("app-show-log")
+    };
     footer = footer
         .push(Space::new().width(Length::Fill))
         .push(button(text(log_label)).on_press(Message::ToggleLog));
@@ -292,10 +309,10 @@ fn footer_row<'a>(app: &'a App, op: &'a ActiveOp) -> Element<'a, Message> {
 
 fn running_status_text(summary: &ProgressSummary) -> String {
     match summary.stage {
-        Stage::Starting => "Starting...".into(),
-        Stage::Done => "Done.".into(),
-        Stage::Failed => "Failed.".into(),
-        s => format!("{}...", s.label()),
+        Stage::Starting => crate::t!("progress-starting"),
+        Stage::Done => crate::t!("app-done"),
+        Stage::Failed => crate::t!("progress-failed"),
+        s => crate::t!("progress-stage-ellipsis", stage = s.label()),
     }
 }
 
