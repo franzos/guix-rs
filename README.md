@@ -101,7 +101,7 @@ See `libguix/README.md` and `libguix/src/lib.rs` for the full surface.
 
 ## Polkit
 
-Polkit is required **only for the privileged paths** — `SystemOps::reconfigure` and `PullOps::as_root` — both of which need to mutate system state owned by root. Everything else (user-profile install/remove/upgrade, search, generation listing) runs unprivileged against `$GUIX_PROFILE` and needs no agent.
+Polkit is required **only for the privileged paths** — `SystemOps::reconfigure` and `PullOps::as_root` — both of which need to mutate system state owned by root. Everything else (user-profile install/remove/upgrade, search, generation listing) runs unprivileged against `$GUIX_PROFILE` and needs no agent. (Library consumers that are already root, e.g. an installer on a TTY, can pass `Privilege::AlreadyRoot` to skip polkit entirely — see `libguix/README.md`.)
 
 Two custom polkit actions ship under [`polkit/`](polkit):
 

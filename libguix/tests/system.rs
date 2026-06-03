@@ -409,8 +409,11 @@ async fn live_system_pull_dry_run_triggers_polkit() {
 
     let g = Guix::discover().await.expect("discover");
     let mut op = g
-        .system()
-        .pull(SystemPullOptions { dry_run: true })
+        .pull()
+        .as_root(SystemPullOptions {
+            dry_run: true,
+            ..Default::default()
+        })
         .expect("spawn system pull");
 
     let mut events = Vec::new();

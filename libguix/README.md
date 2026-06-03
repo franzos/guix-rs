@@ -14,8 +14,9 @@ The module tree mirrors `guix --help` so navigating the library reads like navig
 | Rust | Guix CLI |
 |---|---|
 | `Guix::package() → PackageOps` | `guix package` (install, remove, upgrade, search, show, generations) |
-| `Guix::system() → SystemOps` | `guix system reconfigure` |
-| `Guix::pull() → PullOps` | `guix pull` (user catalog + pkexec'd root catalog) |
+| `Guix::system() → SystemOps` | `guix system reconfigure` / `guix system init` |
+| `Guix::pull() → PullOps` | `guix pull` (user catalog + root catalog, via pkexec or already-root) |
+| `Guix::archive() → ArchiveOps` | `guix archive --authorize` |
 | `Guix::gc() → GcOps` | `guix gc` |
 | `Guix::shell() → ShellOps` | `guix shell` |
 | `Guix::build() → BuildOps` | `guix build` |
@@ -80,11 +81,61 @@ let op = guix.pull().user()?;                                  // ~/.config/guix
 let op = guix.pull().as_root(SystemPullOptions::default())?;   // /var/guix/profiles/per-user/root
 ```
 
+### Root contexts without polkit (e.g. an OS installer)
+
+When the caller is already root and there's no desktop session — an installer on a bare TTY — set `Privilege::AlreadyRoot` to spawn `guix` directly. No `pkexec`, and cancellation works because the child is yours. Build-server and scheduler flags pass through via `BuildOptions`:
+
+```rust
+use libguix::{BuildOptions, InitOptions, Privilege};
+use std::path::Path;
+
+let op = guix.system().init(
+    Path::new("/mnt/etc/config.scm"),
+    Path::new("/mnt"),
+    InitOptions {
+        privilege: Privilege::AlreadyRoot,
+        build: BuildOptions {
+            substitute_urls: vec!["https://ci.guix.gnu.org".into()],
+            cores: Some(4),
+            ..Default::default()
+        },
+        ..Default::default()
+    },
+)?;
+op.await_completion().await?;
+```
+
+Fold the event stream into a render-ready snapshot — stage, per-item build/download state, percent — with no UI-framework dependency:
+
+```rust
+use libguix::progress::Summary;
+use futures_util::StreamExt;
+
+let mut summary = Summary::new();
+while let Some(batch) = op.events_mut().next().await {
+    for evt in batch { summary.ingest(&evt); }
+    // render summary.stage, summary.percent_complete(), summary.downloads, …
+}
+```
+
+Transient substitute/network failures can be retried with an opt-in policy. Streaming retry stays caller-side (an `Operation`'s stream is consumed once), so `run_with_retry` covers the headless await-to-completion case:
+
+```rust
+use libguix::{run_with_retry, RetryPolicy, SystemPullOptions, Privilege};
+
+run_with_retry(&RetryPolicy::installer_default(), || async {
+    guix.pull().as_root(SystemPullOptions {
+        privilege: Privilege::AlreadyRoot,
+        ..Default::default()
+    })
+}).await?;
+```
+
 ## Requirements
 
 A working `guix` binary on `PATH` (or at `/run/current-system/profile/bin/guix`). Tested against modern Guix releases — see `MIN_GUIX_VERSION_DATE`.
 
-The privileged paths (`SystemOps::reconfigure`, `PullOps::as_root`) additionally need polkit actions installed and an authentication agent running in your session. The library returns a structured `PolkitFailure` error if either is missing.
+Under the default `Privilege::Pkexec`, the privileged paths (`SystemOps::reconfigure` / `init`, `PullOps::as_root`, `ArchiveOps::authorize`) need polkit actions installed and an authentication agent running in your session — the library returns a structured `PolkitFailure` error if either is missing. `Privilege::AlreadyRoot` skips polkit entirely.
 
 ## Features
 
@@ -93,6 +144,8 @@ The privileged paths (`SystemOps::reconfigure`, `PullOps::as_root`) additionally
 | `tracing` | yes | Emit `tracing` events from the REPL actor and command helpers. |
 | `live-tests` | no | Enables tests that shell out to a real `guix` on the host. |
 | `blocking` | no | Reserved for a future blocking wrapper API. |
+
+Embedding in a minimal-closure consumer? Set `default-features = false` to drop the `tracing` dependency. The only async runtime requirements in your own scope are `tokio` and `tokio-stream`.
 
 ## Status
 

@@ -49,6 +49,7 @@ macro_rules! trace_warn {
 pub(crate) use trace_debug;
 pub(crate) use trace_warn;
 
+mod archive;
 mod build;
 mod channels;
 mod cmd;
@@ -58,11 +59,15 @@ mod error;
 mod gc;
 mod installed;
 mod operation;
+mod options;
 mod package;
 mod parsers;
 mod process;
+// Public so external GUIs (e.g. the installer) can reuse the state machine.
+pub mod progress;
 mod pull;
 mod repl;
+mod retry;
 mod shell;
 mod system;
 mod types;
@@ -71,6 +76,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+pub use archive::ArchiveOps;
 pub use build::{BuildBuilder, BuildOps};
 pub use channels::{ChannelOp, ChannelsError, ChannelsFile};
 pub use describe::DescribeOps;
@@ -79,12 +85,14 @@ pub use error::{GuixError, PolkitFailure};
 pub use gc::{ByteSize, GcOps, GcOptions};
 pub use installed::{InstalledOps, UNKNOWN_BUCKET};
 pub use operation::{CancelHandle, EventStream, Operation};
+pub use options::{BuildOptions, Privilege};
 pub use package::{PackageOps, SearchFastResult, DEFAULT_SEARCH_LIMIT};
 pub use parsers::sexp::{parse_channels_list, ChannelsList};
 pub use pull::{PullOps, SystemPullOptions};
 pub use repl::Repl;
+pub use retry::{run_with_retry, RetryPolicy};
 pub use shell::{ShellBuilder, ShellOps};
-pub use system::{ReconfigureOptions, SystemOps, CURRENT_SYSTEM_CONFIG};
+pub use system::{InitOptions, ReconfigureOptions, SystemOps, CURRENT_SYSTEM_CONFIG};
 pub use types::{
     Channel, Generation, InstalledPackage, KnownBug, PackageDetail, PackageSummary, ProgressEvent,
     ProgressStream,
@@ -183,10 +191,16 @@ impl Guix {
         }
     }
 
-    /// `system reconfigure` always targets `/run/current-system/profile/bin/guix`,
-    /// so we don't thread `self.binary` or `self.profile` through.
+    /// The `pkexec` path targets `/run/current-system/profile/bin/guix`;
+    /// `self.binary` is threaded for the already-root (installer) path.
     pub fn system(&self) -> SystemOps {
-        SystemOps::new()
+        SystemOps::new(self.binary.clone())
+    }
+
+    /// The `pkexec` path targets `/run/current-system/profile/bin/guix`;
+    /// `self.binary` is threaded for the already-root (installer) path.
+    pub fn archive(&self) -> ArchiveOps {
+        ArchiveOps::new(self.binary.clone())
     }
 
     pub fn pull(&self) -> PullOps {

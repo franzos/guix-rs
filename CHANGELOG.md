@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.7] - 2026-06-03
+
+### Added
+- `libguix`: `guix system init` operation for installers
+- `libguix`: already-root execution mode — runs `guix` directly without `pkexec`
+- `libguix`: build-flag pass-through on pull/reconfigure/init (`--substitute-urls`, `--no-substitutes`, `--cores`, `--max-jobs`, `--system`)
+- `libguix`: `--channels=<file>` on `guix pull`
+- `libguix`: `guix archive --authorize` wrapper
+- `libguix`: opt-in retry for transient substitute/network failures
+- `libguix`: progress state machine reusable as `libguix::progress::Summary`
+
+### Changed
+- Progress percentage uses the up-front build/download totals when available
+
 ## [0.1.6] - 2026-06-02
 
 ### Added

@@ -4,7 +4,7 @@ use iced::widget::{
 use iced::{Alignment, Element, Font, Length};
 
 use crate::app::{bootstrap_help_message, op_supports_cancel, ActiveOp, App, Message};
-use crate::progress_summary::{BuildStatus, ProgressSummary, Stage};
+use crate::progress_summary::{BuildStatus, ProgressSummary, Stage, StageLabel};
 
 pub fn view<'a>(app: &'a App, op: &'a ActiveOp) -> Element<'a, Message> {
     let summary = &op.progress;
@@ -282,8 +282,8 @@ fn footer_row<'a>(app: &'a App, op: &'a ActiveOp) -> Element<'a, Message> {
             .push(cancel_el)
             .push(text(running_status_text(&op.progress)));
     } else {
-        let summary_text = match op.progress.failure.as_deref() {
-            Some(msg) => msg.to_string(),
+        let summary_text = match &op.progress.failure {
+            Some(f) => crate::progress_summary::failure_text(f),
             None => match op.final_code {
                 Some(0) => crate::t!("app-done"),
                 Some(code) => crate::t!("app-failed-exit", code = code),
@@ -337,7 +337,7 @@ mod tests {
     fn fake_op(stage_events: &[ProgressEvent]) -> (App, ActiveOp) {
         let (app, _) = App::new();
         let kind = crate::operation_subscription::OpKind::Pull;
-        let mut progress = ProgressSummary::new(kind);
+        let mut progress = ProgressSummary::new();
         for e in stage_events {
             progress.ingest(e);
         }

@@ -1212,7 +1212,7 @@ impl App {
                     final_code: None,
                     finished: false,
                     bootstrap_likely: false,
-                    progress: ProgressSummary::new(kind),
+                    progress: ProgressSummary::new(),
                     channel_shadow_seen: false,
                 });
                 Task::none()
@@ -2149,7 +2149,7 @@ mod tests {
             final_code: None,
             finished: false,
             bootstrap_likely: false,
-            progress: ProgressSummary::new(crate::operation_subscription::OpKind::Install),
+            progress: ProgressSummary::new(),
             channel_shadow_seen: false,
         });
         let _sub = app.subscription();
@@ -2171,7 +2171,7 @@ mod tests {
             final_code: None,
             finished: false,
             bootstrap_likely: false,
-            progress: ProgressSummary::new(OpKind::Pull),
+            progress: ProgressSummary::new(),
             channel_shadow_seen: false,
         });
 
@@ -2296,7 +2296,7 @@ mod tests {
             final_code: None,
             finished: false,
             bootstrap_likely: false,
-            progress: ProgressSummary::new(OpKind::Pull),
+            progress: ProgressSummary::new(),
             channel_shadow_seen: false,
         });
         let batch = vec![ProgressEvent::Line {
@@ -2332,7 +2332,7 @@ mod tests {
             final_code,
             finished: false,
             bootstrap_likely: false,
-            progress: ProgressSummary::new(OpKind::Pull),
+            progress: ProgressSummary::new(),
             channel_shadow_seen,
         }
     }
@@ -2591,7 +2591,7 @@ mod tests {
             final_code: Some(0),
             finished: false,
             bootstrap_likely: false,
-            progress: ProgressSummary::new(OpKind::Install),
+            progress: ProgressSummary::new(),
             channel_shadow_seen: false,
         });
         let _ = app.update(Message::Progress(OpEvent::Finished));

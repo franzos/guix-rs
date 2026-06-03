@@ -30,6 +30,8 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 nix = { version = "0.31", features = ["signal", "fs", "process"] }
 libc = "0.2"
 lexpr = "0.2"
+# Insertion-order map: keeps build/download entries in event order.
+indexmap = "2"
 tempfile = "3"
 tracing = { version = "0.1", default-features = false, features = ["std"], optional = true }
 

@@ -3,25 +3,31 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::cmd::pkexec_guix_cmd;
 use crate::error::{GuixError, PolkitFailure};
-use crate::operation::{spawn_operation_with, ExitClassifier, Operation};
+use crate::operation::{spawn_operation_with, Operation};
+use crate::options::{privileged_guix_cmd, BuildOptions, Privilege};
 
 /// Display-only — reconfiguring requires the source `.scm`, not this snapshot.
 pub const CURRENT_SYSTEM_CONFIG: &str = "/run/current-system/configuration.scm";
 
 pub(crate) const GUIX_PROFILES_ROOT: &str = "/var/guix/profiles";
 
+/// `binary` is only consulted under [`Privilege::AlreadyRoot`]; the `pkexec`
+/// path always targets the trusted-path guix (see `cmd::POLKIT_GUIX_PATH`).
 #[derive(Clone)]
-pub struct SystemOps;
+pub struct SystemOps {
+    binary: PathBuf,
+}
 
 impl SystemOps {
-    pub(crate) fn new() -> Self {
-        Self
+    pub(crate) fn new(binary: PathBuf) -> Self {
+        Self { binary }
     }
 
     pub(crate) fn new_for_tests() -> Self {
-        Self
+        Self {
+            binary: PathBuf::from("/run/current-system/profile/bin/guix"),
+        }
     }
 
     /// Distinguishes `NotFound` (→ `NotOnGuixSystem`, expected on foreign
@@ -32,7 +38,9 @@ impl SystemOps {
         current_configuration_path_with(&p)
     }
 
-    /// `pkexec guix system reconfigure …` with auth-agent pre-flight.
+    /// `guix system reconfigure …`. Under [`Privilege::Pkexec`] (default)
+    /// runs auth-agent pre-flight then `pkexec`; under
+    /// [`Privilege::AlreadyRoot`] spawns guix directly (installer path).
     /// Env knobs: `LIBGUIX_SKIP_AGENT_CHECK`, `LIBGUIX_FORCE_NO_AGENT`.
     /// `-L` flag positioning is load-bearing for polkit — see NOTES.md.
     pub fn reconfigure(
@@ -40,11 +48,33 @@ impl SystemOps {
         config: &Path,
         opts: ReconfigureOptions,
     ) -> Result<Operation, GuixError> {
-        preflight_auth_agent()?;
-
         let args = build_reconfigure_args(config, &opts);
-        let c = pkexec_guix_cmd(&args)?;
-        spawn_operation_with(c, ExitClassifier::Pkexec)
+        self.spawn_system_op(&args, opts.privilege)
+    }
+
+    /// `guix system init <config> <target>` — populates a freshly-mounted
+    /// root (the installer uses `/mnt`). Identical progress output to
+    /// `reconfigure`, so the same stderr parser covers it.
+    pub fn init(
+        &self,
+        config: &Path,
+        target: &Path,
+        opts: InitOptions,
+    ) -> Result<Operation, GuixError> {
+        let args = build_init_args(config, target, &opts);
+        self.spawn_system_op(&args, opts.privilege)
+    }
+
+    fn spawn_system_op(
+        &self,
+        args: &[String],
+        privilege: Privilege,
+    ) -> Result<Operation, GuixError> {
+        if privilege == Privilege::Pkexec {
+            preflight_auth_agent()?;
+        }
+        let (cmd, classifier) = privileged_guix_cmd(privilege, &self.binary, args)?;
+        spawn_operation_with(cmd, classifier)
     }
 }
 
@@ -55,6 +85,7 @@ fn build_reconfigure_args(config: &Path, opts: &ReconfigureOptions) -> Vec<Strin
         args.push("-L".into());
         args.push(p.to_string_lossy().into_owned());
     }
+    opts.build.append_args(&mut args);
     if opts.dry_run {
         args.push("--dry-run".into());
     }
@@ -65,6 +96,19 @@ fn build_reconfigure_args(config: &Path, opts: &ReconfigureOptions) -> Vec<Strin
     args
 }
 
+/// `system init` takes two positionals: `<config> <target>`, in that order.
+fn build_init_args(config: &Path, target: &Path, opts: &InitOptions) -> Vec<String> {
+    let mut args: Vec<String> = vec!["system".into(), "init".into()];
+    for p in &opts.load_paths {
+        args.push("-L".into());
+        args.push(p.to_string_lossy().into_owned());
+    }
+    opts.build.append_args(&mut args);
+    args.push(config.to_string_lossy().into_owned());
+    args.push(target.to_string_lossy().into_owned());
+    args
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ReconfigureOptions {
     pub dry_run: bool,
@@ -72,6 +116,21 @@ pub struct ReconfigureOptions {
     /// Forwarded as `-L <path>` per entry between `reconfigure` and the
     /// config — required for configs importing local modules.
     pub load_paths: Vec<PathBuf>,
+    /// Substitute/scheduler flags forwarded to `guix`.
+    pub build: BuildOptions,
+    /// How to acquire root. Defaults to `pkexec`.
+    pub privilege: Privilege,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct InitOptions {
+    /// Forwarded as `-L <path>` per entry — required for configs importing
+    /// local modules.
+    pub load_paths: Vec<PathBuf>,
+    /// Substitute/scheduler flags forwarded to `guix`.
+    pub build: BuildOptions,
+    /// How to acquire root. The installer runs already-root.
+    pub privilege: Privilege,
 }
 
 pub(crate) fn preflight_auth_agent() -> Result<(), GuixError> {
@@ -244,12 +303,72 @@ mod tests {
     }
 
     #[test]
+    fn reconfigure_args_include_build_options() {
+        let cfg = PathBuf::from("/etc/config.scm");
+        let opts = ReconfigureOptions {
+            build: BuildOptions {
+                substitute_urls: vec!["https://ci.example".into()],
+                cores: Some(4),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let args = build_reconfigure_args(&cfg, &opts);
+        assert_eq!(args[0], "system");
+        assert_eq!(args[1], "reconfigure");
+        assert!(args.contains(&"--substitute-urls=https://ci.example".to_string()));
+        assert!(args.contains(&"--cores=4".to_string()));
+        assert_eq!(args.last().unwrap(), "/etc/config.scm");
+    }
+
+    #[test]
+    fn init_args_bare() {
+        let cfg = PathBuf::from("/mnt/etc/config.scm");
+        let target = PathBuf::from("/mnt");
+        let args = build_init_args(&cfg, &target, &InitOptions::default());
+        assert_eq!(args, vec!["system", "init", "/mnt/etc/config.scm", "/mnt"]);
+    }
+
+    /// Config precedes target; build options sit between the subcommand and
+    /// the positionals.
+    #[test]
+    fn init_args_with_build_options_and_load_paths() {
+        let cfg = PathBuf::from("/mnt/etc/config.scm");
+        let target = PathBuf::from("/mnt");
+        let opts = InitOptions {
+            load_paths: vec![PathBuf::from("/mnt/modules")],
+            build: BuildOptions {
+                substitute_urls: vec!["https://ci.example".into()],
+                no_substitutes: false,
+                max_jobs: Some(2),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let args = build_init_args(&cfg, &target, &opts);
+        assert_eq!(
+            args,
+            vec![
+                "system",
+                "init",
+                "-L",
+                "/mnt/modules",
+                "--substitute-urls=https://ci.example",
+                "--max-jobs=2",
+                "/mnt/etc/config.scm",
+                "/mnt",
+            ]
+        );
+    }
+
+    #[test]
     fn reconfigure_args_load_paths_with_flags() {
         let cfg = PathBuf::from("/etc/config.scm");
         let opts = ReconfigureOptions {
             dry_run: true,
             allow_downgrades: true,
             load_paths: vec![PathBuf::from("/srv/cfg")],
+            ..Default::default()
         };
         let args = build_reconfigure_args(&cfg, &opts);
         assert_eq!(
