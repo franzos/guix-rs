@@ -81,12 +81,13 @@ impl Default for Settings {
     }
 }
 
-/// Opt-in fetch of icons + screenshots from third-party catalogs. Off by
-/// default — enabling it makes network requests to flathub.org /
-/// screenshots.debian.net when the user selects a search result.
+/// Fetch of icons + screenshots from third-party catalogs. On by default;
+/// makes network requests to flathub.org / screenshots.debian.net when the
+/// user browses apps. Users can disable it in Settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppMetadataSettings {
-    #[serde(default)]
+    // default_true, not bare serde(default): a bool's serde default is false.
+    #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default = "default_true")]
     pub use_flathub: bool,
@@ -101,7 +102,7 @@ fn default_true() -> bool {
 impl Default for AppMetadataSettings {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             use_flathub: true,
             use_debian_screenshots: true,
         }
@@ -385,5 +386,21 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(s.effective_load_paths(), vec![PathBuf::from("/srv/cfg")]);
+    }
+
+    #[test]
+    fn app_metadata_enabled_by_default() {
+        assert!(AppMetadataSettings::default().enabled);
+    }
+
+    #[test]
+    fn explicit_disable_is_preserved() {
+        let dir = std::env::temp_dir().join("guix-gui-test-metadata-off");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        std::fs::write(&path, r#"{"app_metadata":{"enabled":false}}"#).unwrap();
+        let loaded = Settings::load_from(&path);
+        assert!(!loaded.app_metadata.enabled);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

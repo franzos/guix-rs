@@ -283,59 +283,6 @@ async fn unrelated_stderr_does_not_trigger_known_bug() {
     );
 }
 
-/// TG3: `LIBGUIX_FORCE_NO_AGENT=1` exercises the auth-agent-absent
-/// pre-flight branch without depending on whatever's running on the host.
-/// We also clear `LIBGUIX_SKIP_AGENT_CHECK` for the test process so
-/// the skip path doesn't shadow the force path.
-///
-/// Synchronous (not `#[tokio::test]`) because `reconfigure` only spawns
-/// when the pre-flight passes — we're asserting the pre-check fires
-/// before any subprocess work.
-///
-/// The env vars are process-global; we use a mutex to serialise this
-/// test against any other env-var-touching test in the same binary.
-#[test]
-fn reconfigure_force_no_agent_returns_no_auth_agent() {
-    use libguix::ReconfigureOptions;
-    use std::path::PathBuf;
-    use std::sync::Mutex;
-
-    // Serialise env-var mutation so parallel test runners don't race.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-
-    let prev_skip = std::env::var_os("LIBGUIX_SKIP_AGENT_CHECK");
-    let prev_force = std::env::var_os("LIBGUIX_FORCE_NO_AGENT");
-    std::env::remove_var("LIBGUIX_SKIP_AGENT_CHECK");
-    std::env::set_var("LIBGUIX_FORCE_NO_AGENT", "1");
-
-    let sys = libguix::__test_support::system_ops();
-    let cfg = PathBuf::from("/tmp/libguix-fake-cfg.scm");
-    let result = sys.reconfigure(&cfg, ReconfigureOptions::default());
-
-    // Restore env before asserting so a panic doesn't leak state into
-    // other tests in this binary.
-    if let Some(v) = prev_skip {
-        std::env::set_var("LIBGUIX_SKIP_AGENT_CHECK", v);
-    }
-    if let Some(v) = prev_force {
-        std::env::set_var("LIBGUIX_FORCE_NO_AGENT", v);
-    } else {
-        std::env::remove_var("LIBGUIX_FORCE_NO_AGENT");
-    }
-
-    // `Operation` doesn't impl `Debug`, so use a manual match rather
-    // than `expect_err`.
-    match result {
-        Ok(_) => panic!("expected NoAuthAgent pre-flight failure, got Ok"),
-        Err(GuixError::Polkit {
-            kind: PolkitFailure::NoAuthAgent,
-            ..
-        }) => {}
-        Err(other) => panic!("expected NoAuthAgent, got {other:?}"),
-    }
-}
-
 /// `#[ignore]`-gated: runs `SystemOps::reconfigure(..., dry_run=true)`
 /// against a temporary minimal config. This triggers a real polkit
 /// prompt; opt in with `cargo test --features live-tests -- --ignored`.
@@ -427,13 +374,13 @@ async fn live_system_pull_dry_run_triggers_polkit() {
     );
 }
 
-/// `LIBGUIX_FORCE_NO_AGENT=1` exercises the auth-agent-absent
-/// pre-flight branch for `system().pull()` too — the agent check is
-/// shared with reconfigure, but we assert it fires before any
-/// subprocess work for pull as well.
+/// The agent check no longer blocks privileged ops — it's an advisory
+/// predicate. `LIBGUIX_FORCE_NO_AGENT=1` forces it `false`,
+/// `LIBGUIX_SKIP_AGENT_CHECK=1` forces it `true`. The env vars are
+/// process-global; a mutex serialises this against any other
+/// env-var-touching test in the same binary.
 #[test]
-fn system_pull_force_no_agent_returns_no_auth_agent() {
-    use libguix::SystemPullOptions;
+fn auth_agent_present_respects_env_overrides() {
     use std::sync::Mutex;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -441,28 +388,31 @@ fn system_pull_force_no_agent_returns_no_auth_agent() {
 
     let prev_skip = std::env::var_os("LIBGUIX_SKIP_AGENT_CHECK");
     let prev_force = std::env::var_os("LIBGUIX_FORCE_NO_AGENT");
+
     std::env::remove_var("LIBGUIX_SKIP_AGENT_CHECK");
     std::env::set_var("LIBGUIX_FORCE_NO_AGENT", "1");
+    let forced_absent = libguix::auth_agent_present();
 
-    let _sys = libguix::__test_support::system_ops();
-    let pull = libguix::__test_support::pull_ops_with_fake_binary();
-    let result = pull.as_root(SystemPullOptions::default());
+    std::env::remove_var("LIBGUIX_FORCE_NO_AGENT");
+    std::env::set_var("LIBGUIX_SKIP_AGENT_CHECK", "1");
+    let forced_present = libguix::auth_agent_present();
 
+    // Restore env before asserting so a panic doesn't leak state.
+    std::env::remove_var("LIBGUIX_SKIP_AGENT_CHECK");
+    std::env::remove_var("LIBGUIX_FORCE_NO_AGENT");
     if let Some(v) = prev_skip {
         std::env::set_var("LIBGUIX_SKIP_AGENT_CHECK", v);
     }
     if let Some(v) = prev_force {
         std::env::set_var("LIBGUIX_FORCE_NO_AGENT", v);
-    } else {
-        std::env::remove_var("LIBGUIX_FORCE_NO_AGENT");
     }
 
-    match result {
-        Ok(_) => panic!("expected NoAuthAgent pre-flight failure, got Ok"),
-        Err(GuixError::Polkit {
-            kind: PolkitFailure::NoAuthAgent,
-            ..
-        }) => {}
-        Err(other) => panic!("expected NoAuthAgent, got {other:?}"),
-    }
+    assert!(
+        !forced_absent,
+        "FORCE_NO_AGENT must force the predicate false"
+    );
+    assert!(
+        forced_present,
+        "SKIP_AGENT_CHECK must force the predicate true"
+    );
 }

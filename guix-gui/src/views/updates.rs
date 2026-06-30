@@ -3,12 +3,13 @@
 
 use std::path::Path;
 
-use iced::widget::{button, column, container, row, text, tooltip, Column};
-use iced::{Element, Length};
+use iced::widget::{button, column, container, row, text, tooltip, Column, Space};
+use iced::{Alignment, Element, Length};
 
-use crate::app::{App, Message, PendingReconfigure};
+use crate::app::{App, Message, PendingReconfigure, PrivilegedHelp, PrivilegedHelpReason};
+use crate::operation_subscription::OpKind;
 use crate::settings::Tab;
-use crate::styles::{self, BOLD, MUTED};
+use crate::styles::{self, BOLD, MONO, MUTED};
 use crate::util::{humanize_age, short_hash};
 
 pub fn view(app: &App) -> Element<'_, Message> {
@@ -16,16 +17,78 @@ pub fn view(app: &App) -> Element<'_, Message> {
     let source = app.settings.source_config_path.as_deref();
     let header = App::view_header(crate::t!("updates-title"), None);
 
-    let sections = column![
-        user_packages_section(app, busy),
-        system_section(app, source, busy),
-    ]
-    .spacing(16)
-    .width(Length::Fill);
+    let mut sections: Column<'_, Message> = Column::new().spacing(16).width(Length::Fill);
+    if let Some(help) = app.updates.privileged_help.as_ref() {
+        sections = sections.push(privileged_help_card(app, help));
+    }
+    sections = sections.push(user_packages_section(app, busy));
+    sections = sections.push(system_section(app, source, busy));
 
     column![header, sections]
         .spacing(8)
         .height(Length::Fill)
+        .into()
+}
+
+/// Prominent, dismissible help for a privileged op that either failed to
+/// start or was triggered without a detected polkit agent. Shows the
+/// equivalent manual `sudo` command so the user can fall back to a terminal.
+fn privileged_help_card<'a>(app: &'a App, help: &'a PrivilegedHelp) -> Element<'a, Message> {
+    let explanation = match &help.reason {
+        PrivilegedHelpReason::NoAgentWarning => crate::t!("updates-privileged-help-no-agent"),
+        PrivilegedHelpReason::Failed(e) => {
+            crate::t!("updates-privileged-help-failed", error = e.clone())
+        }
+    };
+    let command = match help.kind {
+        OpKind::Reconfigure => {
+            let load = app
+                .auto_load_path()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "<parent of config>".into());
+            let cfg = app
+                .settings
+                .source_config_path
+                .as_deref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "<set source config>".into());
+            crate::t!(
+                "updates-privileged-help-cmd-reconfigure",
+                load = load,
+                cfg = cfg
+            )
+        }
+        _ => crate::t!("updates-privileged-help-cmd-pull"),
+    };
+
+    let dismiss = button(text(crate::t!("common-dismiss")).size(12))
+        .padding([6, 12])
+        .style(styles::btn_ghost)
+        .on_press(Message::DismissPrivilegedHelp);
+    let heading_row = row![
+        text(crate::t!("updates-privileged-help-heading"))
+            .size(15)
+            .font(BOLD)
+            .color(styles::WARNING),
+        Space::new().width(Length::Fill),
+        dismiss,
+    ]
+    .align_y(Alignment::Center);
+
+    let inner = column![
+        heading_row,
+        text(explanation).size(13).color(styles::TEXT),
+        text(crate::t!("updates-privileged-help-cmd-label"))
+            .size(12)
+            .color(MUTED),
+        text(command).size(13).font(MONO),
+    ]
+    .spacing(8);
+
+    container(inner)
+        .padding(16)
+        .width(Length::Fill)
+        .style(styles::card)
         .into()
 }
 

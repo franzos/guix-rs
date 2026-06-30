@@ -92,7 +92,9 @@ pub use pull::{PullOps, SystemPullOptions};
 pub use repl::Repl;
 pub use retry::{run_with_retry, RetryPolicy};
 pub use shell::{ShellBuilder, ShellOps};
-pub use system::{InitOptions, ReconfigureOptions, SystemOps, CURRENT_SYSTEM_CONFIG};
+pub use system::{
+    auth_agent_present, InitOptions, ReconfigureOptions, SystemOps, CURRENT_SYSTEM_CONFIG,
+};
 pub use types::{
     Channel, Generation, InstalledPackage, KnownBug, PackageDetail, PackageSummary, ProgressEvent,
     ProgressStream,

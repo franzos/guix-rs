@@ -134,6 +134,22 @@ pub struct UpdatesState {
     pub loading_channels: bool,
     pub error: Option<String>,
     pub mtimes: PullMtimes,
+    /// Prominent help card for privileged ops (system pull / reconfigure):
+    /// shown when no polkit agent is detected or when the op fails to start.
+    pub privileged_help: Option<PrivilegedHelp>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PrivilegedHelp {
+    pub kind: OpKind,
+    pub reason: PrivilegedHelpReason,
+}
+
+#[derive(Debug, Clone)]
+pub enum PrivilegedHelpReason {
+    NoAgentWarning,
+    /// Covers both pre-spawn start failures and runtime completion failures.
+    Failed(String),
 }
 
 /// Refreshed alongside the channel list — never `stat(2)` from `view()`.
@@ -291,7 +307,11 @@ pub enum Message {
         slot: SharedOp,
         cancel: Carrier<CancelHandle>,
     },
-    OpStartFailed(String),
+    OpStartFailed {
+        kind: OpKind,
+        error: String,
+    },
+    DismissPrivilegedHelp,
     Progress(OpEvent),
     CancelClicked,
     DismissOverlay,
@@ -618,9 +638,17 @@ impl App {
                 Task::none()
             }
             Message::FetchUserCatalogClicked => self.start_op(OpKind::Pull, |g| g.pull().user()),
-            Message::FetchSystemCatalogClicked => self.start_op(OpKind::SystemPull, |g| {
-                g.pull().as_root(SystemPullOptions::default())
-            }),
+            Message::FetchSystemCatalogClicked => {
+                if !libguix::auth_agent_present() {
+                    self.updates.privileged_help = Some(PrivilegedHelp {
+                        kind: OpKind::SystemPull,
+                        reason: PrivilegedHelpReason::NoAgentWarning,
+                    });
+                }
+                self.start_op(OpKind::SystemPull, |g| {
+                    g.pull().as_root(SystemPullOptions::default())
+                })
+            }
             Message::UpgradeClicked => {
                 self.start_op(OpKind::Upgrade, |g| g.package().upgrade(None))
             }
@@ -648,6 +676,12 @@ impl App {
                     config_path,
                     load_paths,
                 } = pending;
+                if !libguix::auth_agent_present() {
+                    self.updates.privileged_help = Some(PrivilegedHelp {
+                        kind: OpKind::Reconfigure,
+                        reason: PrivilegedHelpReason::NoAgentWarning,
+                    });
+                }
                 self.start_op(OpKind::Reconfigure, move |g| {
                     g.system().reconfigure(
                         &config_path,
@@ -1246,8 +1280,20 @@ impl App {
                 });
                 Task::none()
             }
-            Message::OpStartFailed(e) => {
-                self.system.validation_message = Some(crate::t!("app-op-start-failed", error = e));
+            Message::OpStartFailed { kind, error } => {
+                if matches!(kind, OpKind::SystemPull | OpKind::Reconfigure) {
+                    self.updates.privileged_help = Some(PrivilegedHelp {
+                        kind,
+                        reason: PrivilegedHelpReason::Failed(error),
+                    });
+                } else {
+                    self.system.validation_message =
+                        Some(crate::t!("app-op-start-failed", error = error));
+                }
+                Task::none()
+            }
+            Message::DismissPrivilegedHelp => {
+                self.updates.privileged_help = None;
                 Task::none()
             }
             Message::Progress(OpEvent::Progress(batch)) => {
@@ -1322,6 +1368,39 @@ impl App {
                         if matches!(op.kind, OpKind::Install | OpKind::Remove | OpKind::Upgrade)
                             && op.final_code == Some(0)
                 );
+                // Keep the Updates-tab privileged-help card in sync with the
+                // outcome of a system pull / reconfigure. The agent check is
+                // advisory now, so a no-agent op still runs and fails at
+                // runtime (pkexec ~127); success clears the card, failure
+                // surfaces the generic help unless a NoAgentWarning (more
+                // specific) is already showing.
+                let priv_help_update: Option<(OpKind, bool, String)> = self
+                    .active_op
+                    .as_ref()
+                    .filter(|op| matches!(op.kind, OpKind::SystemPull | OpKind::Reconfigure))
+                    .map(|op| {
+                        let success = op.final_code == Some(0);
+                        let detail = match &op.progress.failure {
+                            Some(f) => crate::progress_summary::failure_text(f),
+                            None => match op.final_code {
+                                Some(code) => crate::t!("app-failed-exit", code = code),
+                                None => crate::t!("updates-privileged-help-failure-generic"),
+                            },
+                        };
+                        (op.kind, success, detail)
+                    });
+                if let Some((kind, success, detail)) = priv_help_update {
+                    if success {
+                        if self.updates.privileged_help.as_ref().map(|h| h.kind) == Some(kind) {
+                            self.updates.privileged_help = None;
+                        }
+                    } else if self.updates.privileged_help.is_none() {
+                        self.updates.privileged_help = Some(PrivilegedHelp {
+                            kind,
+                            reason: PrivilegedHelpReason::Failed(detail),
+                        });
+                    }
+                }
                 // Profile-mutating ops invalidate the
                 // installed-by-channel cache. We invalidate on any
                 // completion (success or failure) of these kinds
@@ -1753,7 +1832,7 @@ impl App {
                     slot,
                     cancel,
                 },
-                Err(e) => Message::OpStartFailed(e),
+                Err(error) => Message::OpStartFailed { kind, error },
             },
         )
     }

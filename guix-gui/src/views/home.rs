@@ -22,10 +22,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
     let mut content: Column<'_, Message> = column![header, subtitle].spacing(8);
 
     for (cat, apps) in recommended::grouped() {
-        // When metadata is enabled, hide tiles whose icon lookup
-        // definitively failed — the Home tab is curated as "apps with an
-        // icon", so a placeholder forever is worse than disappearing.
-        // While metadata is disabled, show every curated tile.
+        // Only channel-gated tiles hide; others fall back to a letter tile.
         let visible: Vec<&RecommendedApp> = apps
             .into_iter()
             .filter(|ra| tile_is_visible(app, ra))
@@ -77,10 +74,10 @@ fn tile<'a>(app: &'a App, ra: &'static RecommendedApp) -> Element<'a, Message> {
                     .height(Length::Fixed(ICON_SIZE))
                     .into()
             }
-            _ => icon_placeholder(),
+            _ => crate::fallback_icon::fallback_icon(ra.name, ICON_SIZE),
         }
     } else {
-        icon_placeholder()
+        crate::fallback_icon::fallback_icon(ra.name, ICON_SIZE)
     };
 
     let name_row = row![
@@ -130,22 +127,8 @@ fn tile_is_visible(app: &App, ra: &RecommendedApp) -> bool {
             return false;
         }
     }
-    if !app.settings.app_metadata.enabled {
-        return true;
-    }
-    !matches!(
-        app.home_icons.get(ra.name),
-        Some(IconCacheEntry::Done(None))
-    )
-}
-
-fn icon_placeholder<'a>() -> Element<'a, Message> {
-    // Reserve the same footprint as a real icon so tiles don't reflow
-    // once metadata loads in.
-    container(Space::new())
-        .width(Length::Fixed(ICON_SIZE))
-        .height(Length::Fixed(ICON_SIZE))
-        .into()
+    // A failed icon lookup no longer hides the app; it renders a letter tile.
+    true
 }
 
 fn installed_badge<'a>(installed: bool) -> Element<'a, Message> {

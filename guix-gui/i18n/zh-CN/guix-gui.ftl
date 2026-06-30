@@ -143,6 +143,17 @@ updates-last-pulled-root-never = 上次拉取（root）：从未。
 updates-last-reconfigured = 上次重新配置：{ $age }。
 updates-last-reconfigured-never = 上次重新配置：从未（不是 Guix System 主机？）。
 
+# -- updates: privileged help card --
+updates-privileged-help-heading = 需要管理员操作
+updates-privileged-help-no-agent = 未检测到 polkit 认证代理。可能不会出现密码提示。如果没有出现，请启动桌面环境的 polkit 代理，或在终端中运行下面的等效命令。
+updates-privileged-help-failed = 此特权操作无法完成：{ $error }。请改为在终端中运行下面的等效命令。
+updates-privileged-help-failure-generic = 认证或特权步骤失败
+updates-privileged-help-cmd-label = 在终端中手动运行：
+# DO NOT TRANSLATE: literal shell command
+updates-privileged-help-cmd-pull = sudo guix pull
+# DO NOT TRANSLATE: literal shell command
+updates-privileged-help-cmd-reconfigure = sudo guix system reconfigure -L { $load } { $cfg }
+
 # -- about --
 about-title = 关于
 about-version = 版本 { $version }

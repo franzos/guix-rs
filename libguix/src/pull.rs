@@ -6,7 +6,7 @@ use crate::error::GuixError;
 use crate::operation::{spawn_operation_with, Operation};
 use crate::options::{privileged_guix_cmd, BuildOptions, Privilege};
 use crate::repl;
-use crate::system::{preflight_auth_agent, GUIX_PROFILES_ROOT};
+use crate::system::GUIX_PROFILES_ROOT;
 use crate::Guix;
 
 #[derive(Clone)]
@@ -26,14 +26,11 @@ impl PullOps {
     }
 
     /// `guix pull` for the root catalog. Under [`Privilege::Pkexec`]
-    /// (default) runs auth-agent pre-flight then `pkexec`; under
-    /// [`Privilege::AlreadyRoot`] spawns guix directly (installer path,
-    /// stderr-parsed). See [`PullOps::user`] for the per-user REPL path.
+    /// (default) runs via `pkexec`; under [`Privilege::AlreadyRoot`]
+    /// spawns guix directly (installer path, stderr-parsed). See
+    /// [`PullOps::user`] for the per-user REPL path.
     pub fn as_root(&self, opts: SystemPullOptions) -> Result<Operation, GuixError> {
         let args = build_pull_args(&opts);
-        if opts.privilege == Privilege::Pkexec {
-            preflight_auth_agent()?;
-        }
         let (cmd, classifier) =
             privileged_guix_cmd(opts.privilege, self.guix.binary_path(), &args)?;
         spawn_operation_with(cmd, classifier)

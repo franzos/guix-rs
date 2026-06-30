@@ -5,6 +5,7 @@ mod app_metadata;
 mod carrier;
 mod channels;
 mod desktop;
+mod fallback_icon;
 mod i18n;
 mod operation_subscription;
 mod progress_summary;
@@ -27,6 +28,13 @@ const DEJAVU: &[u8] = include_bytes!("../assets/fonts/DejaVuSans.ttf");
 const DEJAVU_BOLD: &[u8] = include_bytes!("../assets/fonts/DejaVuSans-Bold.ttf");
 const DEJAVU_MONO: &[u8] = include_bytes!("../assets/fonts/DejaVuSansMono.ttf");
 
+// Monochrome Noto Emoji (OFL), subset to the 4 sidebar glyphs DejaVu lacks
+// (house, magnifier, package, antenna). cosmic-text falls back to it, so
+// the bare text(icon) sidebar calls need no change. Regenerate from
+// texlive-noto-emoji's NotoEmoji-Regular.ttf via:
+//   pyftsubset NotoEmoji-Regular.ttf --unicodes=1F3E0,1F50D,1F4E6,1F4E1
+const NOTO_EMOJI: &[u8] = include_bytes!("../assets/fonts/NotoEmoji-subset.ttf");
+
 fn main() -> iced::Result {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
@@ -47,5 +55,6 @@ fn main() -> iced::Result {
         .font(DEJAVU)
         .font(DEJAVU_BOLD)
         .font(DEJAVU_MONO)
+        .font(NOTO_EMOJI)
         .run()
 }

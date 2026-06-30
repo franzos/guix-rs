@@ -25,10 +25,6 @@ impl ArchiveOps {
     /// s-expression, read on stdin) to the store's trusted-keys ACL. Needs
     /// root: the installer runs [`Privilege::AlreadyRoot`].
     pub async fn authorize(&self, key: &str, privilege: Privilege) -> Result<(), GuixError> {
-        if privilege == Privilege::Pkexec {
-            crate::system::preflight_auth_agent()?;
-        }
-
         let (mut cmd, _classifier) = privileged_guix_cmd(privilege, &self.binary, &build_args())?;
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())

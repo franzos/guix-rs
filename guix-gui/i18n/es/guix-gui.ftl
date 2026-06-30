@@ -158,6 +158,17 @@ updates-last-pulled-root-never = Última obtención (root): nunca.
 updates-last-reconfigured = Última reconfiguración: hace { $age }.
 updates-last-reconfigured-never = Última reconfiguración: nunca (¿no es un host con Guix System?).
 
+# -- updates: privileged help card --
+updates-privileged-help-heading = Se requiere acción de administrador
+updates-privileged-help-no-agent = No se detectó ningún agente de autenticación polkit. Puede que no aparezca una solicitud de contraseña. Si no aparece, inicie el agente polkit de su escritorio o ejecute el comando equivalente de abajo en una terminal.
+updates-privileged-help-failed = Esta operación privilegiada no pudo completarse: { $error }. Ejecute en su lugar el comando equivalente de abajo en una terminal.
+updates-privileged-help-failure-generic = fallo de autenticación o de un paso privilegiado
+updates-privileged-help-cmd-label = Ejecute esto manualmente en una terminal:
+# DO NOT TRANSLATE: literal shell command
+updates-privileged-help-cmd-pull = sudo guix pull
+# DO NOT TRANSLATE: literal shell command
+updates-privileged-help-cmd-reconfigure = sudo guix system reconfigure -L { $load } { $cfg }
+
 # -- about --
 about-title = Acerca de
 about-version = Versión { $version }

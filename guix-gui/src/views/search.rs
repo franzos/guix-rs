@@ -163,6 +163,8 @@ fn detail_pane(app: &App) -> Element<'_, Message> {
                 .width(Length::Fixed(48.0))
                 .height(Length::Fixed(48.0)),
         );
+    } else {
+        header = header.push(crate::fallback_icon::fallback_icon(&p.name, 48.0));
     }
     header = header.push(text(p.name.clone()).font(BOLD).size(20));
     header = header.push(text(p.version.clone()).size(14).color(MUTED));

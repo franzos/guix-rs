@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.1.11] - 2026-06-30
+
+### Fixed
+- System pull/reconfigure silently did nothing without a detected polkit agent
+
+### Changed
+- Polkit agent check is now advisory; privileged ops no longer blocked by it
+
+### Added
+- Updates tab shows a manual `sudo` fallback command when a privileged op fails
+
+## [0.1.10] - 2026-06-30
+
+### Added
+- Colored letter-tile placeholder for apps without an icon (and when metadata is off)
+
+### Changed
+- App metadata (icons, screenshots) now fetched by default; disable in Settings
+
+### Fixed
+- Sidebar icons now render on systems without an emoji font (bundled Noto Emoji subset)
+
 ## [0.1.9] - 2026-06-30
 
 ### Added

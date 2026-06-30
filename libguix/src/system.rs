@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::error::{GuixError, PolkitFailure};
+use crate::error::GuixError;
 use crate::operation::{spawn_operation_with, Operation};
 use crate::options::{privileged_guix_cmd, BuildOptions, Privilege};
 
@@ -39,10 +39,9 @@ impl SystemOps {
     }
 
     /// `guix system reconfigure …`. Under [`Privilege::Pkexec`] (default)
-    /// runs auth-agent pre-flight then `pkexec`; under
-    /// [`Privilege::AlreadyRoot`] spawns guix directly (installer path).
-    /// Env knobs: `LIBGUIX_SKIP_AGENT_CHECK`, `LIBGUIX_FORCE_NO_AGENT`.
-    /// `-L` flag positioning is load-bearing for polkit — see NOTES.md.
+    /// runs via `pkexec`; under [`Privilege::AlreadyRoot`] spawns guix
+    /// directly (installer path). `-L` flag positioning is load-bearing
+    /// for polkit — see NOTES.md.
     pub fn reconfigure(
         &self,
         config: &Path,
@@ -70,9 +69,6 @@ impl SystemOps {
         args: &[String],
         privilege: Privilege,
     ) -> Result<Operation, GuixError> {
-        if privilege == Privilege::Pkexec {
-            preflight_auth_agent()?;
-        }
         let (cmd, classifier) = privileged_guix_cmd(privilege, &self.binary, args)?;
         spawn_operation_with(cmd, classifier)
     }
@@ -133,23 +129,17 @@ pub struct InitOptions {
     pub privilege: Privilege,
 }
 
-pub(crate) fn preflight_auth_agent() -> Result<(), GuixError> {
+/// Best-effort check for a running polkit auth agent. Honors
+/// `LIBGUIX_SKIP_AGENT_CHECK` (force true) and `LIBGUIX_FORCE_NO_AGENT`
+/// (force false) for testing/overrides; otherwise scans `/proc`.
+pub fn auth_agent_present() -> bool {
     if std::env::var_os("LIBGUIX_SKIP_AGENT_CHECK").is_some() {
-        return Ok(());
+        return true;
     }
-    let present = if std::env::var_os("LIBGUIX_FORCE_NO_AGENT").is_some() {
-        false
-    } else {
-        auth_agent_present()
-    };
-    if !present {
-        return Err(GuixError::Polkit {
-            kind: PolkitFailure::NoAuthAgent,
-            code: -1,
-            stderr_tail: String::new(),
-        });
+    if std::env::var_os("LIBGUIX_FORCE_NO_AGENT").is_some() {
+        return false;
     }
-    Ok(())
+    auth_agent_present_scan()
 }
 
 #[cfg(test)]
@@ -210,12 +200,12 @@ const fn truncate_comm(s: &str) -> &str {
 /// Best-effort `/proc/*/comm` scan against [`AGENT_NAMES`]. Non-Linux
 /// returns `true` (skip).
 #[cfg(target_os = "linux")]
-fn auth_agent_present() -> bool {
+fn auth_agent_present_scan() -> bool {
     auth_agent_present_in(Path::new("/proc"))
 }
 
 #[cfg(not(target_os = "linux"))]
-fn auth_agent_present() -> bool {
+fn auth_agent_present_scan() -> bool {
     true
 }
 

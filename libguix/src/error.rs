@@ -73,7 +73,6 @@ pub enum PolkitFailure {
     AuthFailed,
     NotAuthorized,
     KilledBySignal(i32),
-    NoAuthAgent,
     /// Distinct from `NotAuthorized` (also 127) so we can surface the
     /// "binary missing" vs "not in trusted path" hint precisely.
     PkexecMissing,

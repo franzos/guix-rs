@@ -172,7 +172,7 @@ mod tests {
         for loc in available_locales() {
             let tag = loc.to_string();
             let l = fluent_language_loader!();
-            l.load_languages(&Localizations, &[loc.clone()])
+            l.load_languages(&Localizations, std::slice::from_ref(&loc))
                 .unwrap_or_else(|e| panic!("{tag}: failed to parse/load: {e}"));
             let src = file_src(&tag);
             assert_eq!(
