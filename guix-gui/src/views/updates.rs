@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use iced::widget::{button, column, container, row, text, tooltip, Column};
-use iced::{Element, Font, Length};
+use iced::{Element, Length};
 
 use crate::app::{App, Message, PendingReconfigure};
 use crate::settings::Tab;
@@ -136,7 +136,7 @@ fn confirm_reconfigure_card<'a>(pending: &'a PendingReconfigure) -> Column<'a, M
     let cfg_label = text(crate::t!("updates-config")).size(12).color(MUTED);
     let cfg_value = text(pending.config_path.display().to_string())
         .size(12)
-        .font(Font::MONOSPACE);
+        .font(styles::MONO);
 
     let mut col: Column<'a, Message> = column![header, blurb, cfg_label, cfg_value].spacing(6);
 
@@ -154,7 +154,7 @@ fn confirm_reconfigure_card<'a>(pending: &'a PendingReconfigure) -> Column<'a, M
     };
     col = col.push(lp_label);
     for p in &pending.load_paths {
-        col = col.push(text(p.display().to_string()).size(12).font(Font::MONOSPACE));
+        col = col.push(text(p.display().to_string()).size(12).font(styles::MONO));
     }
 
     let confirm = button(text(crate::t!("updates-confirm-reconfigure-btn")).size(13))

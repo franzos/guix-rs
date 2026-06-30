@@ -1,7 +1,7 @@
 use iced::widget::{
     button, column, container, progress_bar, row, scrollable, text, tooltip, Column, Space,
 };
-use iced::{Alignment, Element, Font, Length};
+use iced::{Alignment, Element, Length};
 
 use crate::app::{bootstrap_help_message, op_supports_cancel, ActiveOp, App, Message};
 use crate::progress_summary::{BuildStatus, ProgressSummary, Stage, StageLabel};
@@ -113,7 +113,7 @@ fn running_builds_section<'a>(summary: &'a ProgressSummary) -> Option<Element<'a
             name = b.pretty_name.clone()
         ))
         .size(12)
-        .font(Font::MONOSPACE)
+        .font(crate::styles::MONO)
         .into();
         col = col.push(line);
     }
@@ -158,7 +158,7 @@ fn finished_builds_section<'a>(summary: &'a ProgressSummary) -> Option<Element<'
             status = status
         ))
         .size(12)
-        .font(Font::MONOSPACE)
+        .font(crate::styles::MONO)
         .into();
         col = col.push(line);
     }
@@ -186,7 +186,7 @@ fn downloads_section<'a>(summary: &'a ProgressSummary) -> Option<Element<'a, Mes
                 (d.bytes_done as f64) / (1024.0 * 1024.0),
             ),
         };
-        let line: Element<'_, Message> = text(label).size(12).font(Font::MONOSPACE).into();
+        let line: Element<'_, Message> = text(label).size(12).font(crate::styles::MONO).into();
         col = col.push(line);
         match d.bytes_total {
             Some(total) if total > 0 => {
@@ -236,7 +236,7 @@ fn finished_downloads_section<'a>(summary: &'a ProgressSummary) -> Option<Elemen
             }
             _ => format!("  {}", d.pretty_name),
         };
-        let line: Element<'_, Message> = text(size_hint).size(12).font(Font::MONOSPACE).into();
+        let line: Element<'_, Message> = text(size_hint).size(12).font(crate::styles::MONO).into();
         col = col.push(line);
     }
     Some(col.into())
@@ -249,7 +249,10 @@ fn bootstrap_help_block<'a>(app: &'a App) -> Element<'a, Message> {
     );
     let mut help_col: Column<'a, Message> = Column::new().spacing(2);
     for ln in help.lines() {
-        let line: Element<'_, Message> = text(ln.to_string()).size(12).font(Font::MONOSPACE).into();
+        let line: Element<'_, Message> = text(ln.to_string())
+            .size(12)
+            .font(crate::styles::MONO)
+            .into();
         help_col = help_col.push(line);
     }
     help_col.into()

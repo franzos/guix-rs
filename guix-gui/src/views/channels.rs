@@ -6,7 +6,7 @@
 //! `views/installed.rs`), and an inline "Add channel" form.
 
 use iced::widget::{button, column, container, row, scrollable, text, text_input, Column, Space};
-use iced::{Element, Font, Length};
+use iced::{Element, Length};
 use libguix::Channel;
 
 use crate::app::{should_render_remove_warning, App, Message};
@@ -1004,7 +1004,7 @@ fn channels_panel(app: &App) -> Element<'_, Message> {
         // Sort by packagesCount descending — biggest-impact channels
         // first. We clone the references; underlying storage stays put.
         let mut sorted: Vec<&DiscoveredChannel> = app.channels.discover_channels.iter().collect();
-        sorted.sort_by(|a, b| b.packages_count.cmp(&a.packages_count));
+        sorted.sort_by_key(|b| std::cmp::Reverse(b.packages_count));
 
         let mut rows: Column<'_, Message> = Column::new().spacing(6);
         for c in sorted {
@@ -1128,7 +1128,7 @@ fn confirm_add_card<'a>(app: &'a App, ch: &'a Channel) -> Element<'a, Message> {
                 .width(Length::Fixed(140.0)),
             text(value.to_string())
                 .size(12)
-                .font(Font::MONOSPACE)
+                .font(styles::MONO)
                 .width(Length::Fill),
         ]
         .spacing(8)
@@ -1181,7 +1181,7 @@ fn confirm_add_card<'a>(app: &'a App, ch: &'a Channel) -> Element<'a, Message> {
             source = guix_gui::discovery::TOYS_API
         ))
         .size(12)
-        .font(Font::MONOSPACE),
+        .font(styles::MONO),
     ]
     .spacing(2);
 

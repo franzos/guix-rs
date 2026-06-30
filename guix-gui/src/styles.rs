@@ -24,11 +24,17 @@ pub const DANGER: Color = Color::from_rgb(0.902, 0.192, 0.192); // #e63131
 pub const WARNING: Color = Color::from_rgb(1.0, 0.757, 0.027);
 
 // -- Fonts --
+//
+// Named families resolve to the faces bundled in `main.rs`, so they don't
+// depend on system fonts. `BOLD` is DejaVu Sans at bold weight; `MONO` is
+// DejaVu Sans Mono (replaces iced's unresolved `Font::MONOSPACE`).
 
 pub const BOLD: Font = Font {
     weight: Weight::Bold,
-    ..Font::DEFAULT
+    ..Font::with_name("DejaVu Sans")
 };
+
+pub const MONO: Font = Font::with_name("DejaVu Sans Mono");
 
 // -- Container styles --
 

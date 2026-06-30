@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use iced::theme::Palette;
 use iced::widget::{button, column, container, row, scrollable, svg, text, tooltip, Column, Space};
-use iced::{Alignment, Element, Font, Length, Subscription, Task, Theme};
+use iced::{Alignment, Element, Length, Subscription, Task, Theme};
 use libguix::{
     CancelHandle, Channel, ChannelOp, ChannelsFile, Guix, GuixError, InstalledPackage, KnownBug,
     Operation, PackageSummary, ProgressEvent, ProgressStream, PullOps, ReconfigureOptions,
@@ -1946,7 +1946,7 @@ impl App {
 
         let mut log_lines: Column<'_, Message> = Column::new().spacing(0);
         for row in self.terminal.rows() {
-            let line: Element<'_, Message> = text(row).size(12).font(Font::MONOSPACE).into();
+            let line: Element<'_, Message> = text(row).size(12).font(styles::MONO).into();
             log_lines = log_lines.push(line);
         }
         let log_scroll = scrollable(log_lines).height(Length::Fill);
@@ -1984,7 +1984,7 @@ impl App {
             let mut help_col: Column<'_, Message> = Column::new().spacing(2);
             for ln in help.lines() {
                 let line: Element<'_, Message> =
-                    text(ln.to_string()).size(12).font(Font::MONOSPACE).into();
+                    text(ln.to_string()).size(12).font(styles::MONO).into();
                 help_col = help_col.push(line);
             }
             footer = footer

@@ -15,8 +15,16 @@ mod util;
 mod views;
 
 use app::App;
+use iced::Font;
 use settings::Settings;
 use tracing_subscriber::EnvFilter;
+
+// Bundle the fonts so the UI renders identically on any machine, with no
+// dependency on system fonts or a working fontconfig. DejaVu covers every
+// shipped locale except CJK, which still falls back to system fonts.
+const DEJAVU: &[u8] = include_bytes!("../assets/fonts/DejaVuSans.ttf");
+const DEJAVU_BOLD: &[u8] = include_bytes!("../assets/fonts/DejaVuSans-Bold.ttf");
+const DEJAVU_MONO: &[u8] = include_bytes!("../assets/fonts/DejaVuSansMono.ttf");
 
 fn main() -> iced::Result {
     let _ = tracing_subscriber::fmt()
@@ -34,5 +42,9 @@ fn main() -> iced::Result {
         .title(App::title)
         .subscription(App::subscription)
         .theme(App::theme)
+        .default_font(Font::with_name("DejaVu Sans"))
+        .font(DEJAVU)
+        .font(DEJAVU_BOLD)
+        .font(DEJAVU_MONO)
         .run()
 }

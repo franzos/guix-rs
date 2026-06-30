@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.8] - 2026-06-30
+
+### Fixed
+- Blank UI on machines without system fonts: DejaVu fonts now bundled
+
 ## [0.1.7] - 2026-06-03
 
 ### Added
