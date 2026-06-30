@@ -4,6 +4,7 @@ mod app;
 mod app_metadata;
 mod carrier;
 mod channels;
+mod desktop;
 mod i18n;
 mod operation_subscription;
 mod progress_summary;

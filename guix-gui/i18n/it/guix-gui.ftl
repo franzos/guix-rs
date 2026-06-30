@@ -240,6 +240,8 @@ system-cache-clear-failed = Svuotamento della cache non riuscito: { $error }
 system-discovery-heading = Rilevamento
 system-discovery-toggle = Sfoglia canali e pacchetti da toys.whereis.social
 system-discovery-blurb = Facoltativo. Richiede l'accesso alla rete. Quando è disattivato, il rilevamento non appare da nessuna parte nell'app.
+system-desktop-refresh = Aggiorna il menu delle applicazioni dopo aver installato le app
+system-desktop-refresh-desc = Ricostruisce il menu del desktop in modo che le applicazioni appena installate appaiano subito (KDE, XFCE, MATE, LXQt). Disattiva se preferisci aggiornare manualmente.
 system-section-metadata = METADATI
 
 # -- channels --

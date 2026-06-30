@@ -244,6 +244,8 @@ system-cache-clear-failed = No se pudo vaciar la caché: { $error }
 system-discovery-heading = Descubrimiento
 system-discovery-toggle = Explorar canales y paquetes de toys.whereis.social
 system-discovery-blurb = Opcional. Requiere acceso a la red. Cuando está desactivado, el descubrimiento no aparece en ninguna parte de la app.
+system-desktop-refresh = Actualizar el menú de aplicaciones tras instalar apps
+system-desktop-refresh-desc = Reconstruye el menú del escritorio para que las aplicaciones recién instaladas aparezcan de inmediato (KDE, XFCE, MATE, LXQt). Desactívalo si prefieres actualizar manualmente.
 system-section-metadata = METADATOS
 
 # -- channels --

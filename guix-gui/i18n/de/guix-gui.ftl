@@ -241,6 +241,8 @@ system-cache-clear-failed = Cache konnte nicht geleert werden: { $error }
 system-discovery-heading = Discovery
 system-discovery-toggle = Kanäle und Pakete von toys.whereis.social durchstöbern
 system-discovery-blurb = Opt-in. Erfordert Netzwerkzugriff. Wenn aus, erscheint Discovery nirgendwo in der App.
+system-desktop-refresh = Anwendungsmenü nach der Installation von Apps aktualisieren
+system-desktop-refresh-desc = Baut das Desktop-Menü neu auf, damit neu installierte Anwendungen sofort erscheinen (KDE, XFCE, MATE, LXQt). Ausschalten, wenn Sie lieber manuell aktualisieren.
 system-section-metadata = METADATEN
 
 # -- channels --

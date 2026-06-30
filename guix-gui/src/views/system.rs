@@ -408,6 +408,26 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .width(Length::Fill)
         .style(styles::card);
 
+    let desktop_refresh_check = checkbox(app.settings.desktop_menu_refresh)
+        .on_toggle(Message::DesktopMenuRefreshToggled)
+        .size(16);
+    let desktop_refresh_inner = column![
+        row![
+            desktop_refresh_check,
+            text(crate::t!("system-desktop-refresh")).size(14),
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center),
+        text(crate::t!("system-desktop-refresh-desc"))
+            .size(12)
+            .color(MUTED),
+    ]
+    .spacing(4);
+    let desktop_refresh_card = container(desktop_refresh_inner)
+        .padding(20)
+        .width(Length::Fill)
+        .style(styles::card);
+
     let metadata_section = column![
         text(crate::t!("system-section-metadata"))
             .size(12)
@@ -417,6 +437,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
             .width(Length::Fill)
             .style(styles::card),
         discovery_card,
+        desktop_refresh_card,
     ]
     .spacing(8);
 

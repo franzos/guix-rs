@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.9] - 2026-06-30
+
+### Added
+- Auto-refresh the desktop application menu after install (KDE, XFCE, MATE, LXQt)
+
 ## [0.1.8] - 2026-06-30
 
 ### Fixed

@@ -34,7 +34,7 @@ impl Tab {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default)]
     pub source_config_path: Option<PathBuf>,
@@ -58,6 +58,27 @@ pub struct Settings {
     /// the system default.
     #[serde(default)]
     pub language: Option<String>,
+    /// Refresh the running desktop's application menu after a profile
+    /// change so newly installed apps appear without a relogin. The
+    /// `serde(default)` only fires on deserialization; `impl Default`
+    /// below covers the first-run path.
+    #[serde(default = "default_true")]
+    pub desktop_menu_refresh: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            source_config_path: None,
+            channels_source_path: None,
+            custom_load_paths: Vec::new(),
+            show_log_by_default: false,
+            app_metadata: AppMetadataSettings::default(),
+            discovery_enabled: false,
+            language: None,
+            desktop_menu_refresh: true,
+        }
+    }
 }
 
 /// Opt-in fetch of icons + screenshots from third-party catalogs. Off by
@@ -219,6 +240,7 @@ mod tests {
             app_metadata: AppMetadataSettings::default(),
             discovery_enabled: true,
             language: Some("de-DE".to_string()),
+            desktop_menu_refresh: true,
         };
         original.save_to(&path).expect("save");
         let loaded = Settings::load_from(&path);
@@ -243,6 +265,11 @@ mod tests {
     fn discovery_defaults_to_off() {
         let s = Settings::default();
         assert!(!s.discovery_enabled);
+    }
+
+    #[test]
+    fn desktop_menu_refresh_defaults_to_on() {
+        assert!(Settings::default().desktop_menu_refresh);
     }
 
     #[test]

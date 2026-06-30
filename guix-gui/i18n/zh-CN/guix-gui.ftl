@@ -226,6 +226,8 @@ system-cache-clear-failed = 清除缓存失败：{ $error }
 system-discovery-heading = 发现
 system-discovery-toggle = 浏览来自 toys.whereis.social 的频道和软件包
 system-discovery-blurb = 需选择启用。需要网络访问。关闭时，发现功能不会出现在应用程序的任何位置。
+system-desktop-refresh = 安装应用后刷新应用程序菜单
+system-desktop-refresh-desc = 重建桌面菜单，让新安装的应用程序立即出现（KDE、XFCE、MATE、LXQt）。如果您更喜欢手动刷新，请关闭。
 system-section-metadata = METADATA
 
 # -- channels --

@@ -230,6 +230,9 @@ pub enum Message {
     /// we store an empty map (don't retry) and don't surface an error.
     ChannelsInstalledByChannelLoaded(Result<HashMap<String, Vec<InstalledPackage>>, String>),
 
+    DesktopMenuRefreshToggled(bool),
+    DesktopMenuRefreshed(crate::desktop::MenuRefresh),
+
     // -- Discover sub-mode (Channels tab) ------------------------------
     DiscoveryEnabledToggled(bool),
     ChannelsSubModeSelected(ChannelsSubMode),
@@ -899,6 +902,32 @@ impl App {
                 ));
                 Task::none()
             }
+            Message::DesktopMenuRefreshToggled(v) => {
+                self.settings.desktop_menu_refresh = v;
+                let _ = self.settings.save();
+                Task::none()
+            }
+            Message::DesktopMenuRefreshed(outcome) => {
+                use crate::desktop::MenuRefresh;
+                match &outcome {
+                    MenuRefresh::Refreshed(de) => {
+                        tracing::info!(target: "guix_gui", "desktop menu refreshed ({de:?})");
+                    }
+                    MenuRefresh::Failed(de, msg) => {
+                        tracing::debug!(target: "guix_gui", "desktop menu refresh failed ({de:?}): {msg}");
+                    }
+                    MenuRefresh::NotNeeded(de) => {
+                        tracing::debug!(target: "guix_gui", "desktop menu refresh not needed ({de:?})");
+                    }
+                    MenuRefresh::CommandMissing(de) => {
+                        tracing::debug!(target: "guix_gui", "desktop menu refresh command missing ({de:?})");
+                    }
+                    MenuRefresh::Disabled => {
+                        tracing::debug!(target: "guix_gui", "desktop menu refresh disabled");
+                    }
+                }
+                Task::none()
+            }
             Message::DiscoveryEnabledToggled(v) => {
                 self.settings.discovery_enabled = v;
                 let _ = self.settings.save();
@@ -1364,7 +1393,10 @@ impl App {
                         self.spawn_pull_mtimes_refresh(),
                     ])
                 } else if refresh_after_profile_change {
-                    self.spawn_installed_refresh()
+                    Task::batch([
+                        self.spawn_installed_refresh(),
+                        self.spawn_desktop_menu_refresh(),
+                    ])
                 } else {
                     Task::none()
                 }
@@ -1406,6 +1438,14 @@ impl App {
                     .map_err(|e| format!("{e}"))
             },
             Message::InstalledLoaded,
+        )
+    }
+
+    fn spawn_desktop_menu_refresh(&self) -> Task<Message> {
+        let enabled = self.settings.desktop_menu_refresh;
+        Task::perform(
+            crate::desktop::refresh_application_menu(enabled),
+            Message::DesktopMenuRefreshed,
         )
     }
 
