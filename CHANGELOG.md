@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.13] - 2026-07-01
+
+### Added
+- Security policy (SECURITY.md) and OpenSSF Scorecard supply-chain hardening
+
+### Changed
+- Updated anyhow, memmap2, and quinn-proto to clear security advisories
+
 ## [0.1.12] - 2026-07-01
 
 ### Changed
