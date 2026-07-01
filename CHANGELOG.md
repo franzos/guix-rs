@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.12] - 2026-07-01
+
+### Changed
+- Renamed the app to "Software" in the launcher; window title reads "Guix Software"
+- Expanded launcher keywords so system searches surface the app
+
 ## [0.1.11] - 2026-06-30
 
 ### Fixed

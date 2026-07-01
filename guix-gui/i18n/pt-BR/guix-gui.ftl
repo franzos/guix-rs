@@ -1,4 +1,4 @@
-app-title = Guix GUI
+app-title = Guix Software
 
 tab-home = Início
 tab-search = Buscar

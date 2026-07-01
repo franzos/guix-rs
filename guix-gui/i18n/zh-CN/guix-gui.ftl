@@ -1,4 +1,4 @@
-app-title = Guix GUI
+app-title = Guix Software
 
 tab-home = 主页
 tab-search = 搜索
