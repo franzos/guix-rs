@@ -7,6 +7,10 @@
   The unofficial, missing GUI for day-to-day Guix usage — search, install, upgrade, and (with polkit) pull and reconfigure the system.
 </p>
 
+<p align="center">
+  <a href="https://scorecard.dev/viewer/?uri=github.com/franzos/guix-rs"><img src="https://api.scorecard.dev/projects/github.com/franzos/guix-rs/badge" alt="OpenSSF Scorecard"></a>
+</p>
+
 ## Description
 
 Two pieces: a Rust library (`libguix`) that wraps the `guix` CLI and its machine-readable REPL, and a GUI (`guix-gui`, built on [Iced](https://iced.rs)) that uses the library to search packages, install / remove / upgrade them, and — with polkit — pull and reconfigure the system. The library surface also covers generation listing, switching, and rollback; the GUI doesn't expose those yet.
