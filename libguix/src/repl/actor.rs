@@ -69,9 +69,9 @@ enum EvalMode {
     /// Used by search, package metadata, and every other read path.
     Fresh,
     /// Evaluates inside the persistent `libguix-rs` namespace — used by
-    /// channels and (Phase 5) config ops, which load Scheme helpers once
-    /// at warmup and call into them many times. See NOTES.md "Fresh-module
-    /// isolation" for why this is opt-in.
+    /// channels and (Phase 5) config ops, whose Scheme helpers are primed
+    /// once at actor bootstrap and called into many times. See NOTES.md
+    /// "Fresh-module isolation" for why this is opt-in.
     Persistent,
 }
 
@@ -191,8 +191,8 @@ impl Repl {
                 //
                 // We also pre-allocate the `libguix-rs` persistent
                 // namespace here so persistent-mode evals can target it
-                // immediately. The module is empty until something
-                // (warmup, channel-ops helper, etc.) defines into it.
+                // immediately. The helper scripts are primed into it right
+                // after the init reply (see below).
                 let init = "(begin \
                             (define %guix-rs-in-eval? #f) \
                             (define %libguix-rs-module \
@@ -209,6 +209,33 @@ impl Repl {
                     return;
                 }
                 // Eat the init form's `(values …)` reply.
+                let _ = frame_rx.recv().await;
+
+                // Prime the persistent helpers directly against the TOP
+                // module (raw write, not wrap_expr) so `%libguix-rs-module`
+                // is bound; `catch #t` keeps a broken guix from bricking the
+                // REPL — Fresh-mode search stays independent of this module.
+                let channel_helper = include_str!("channel_ops.scm");
+                let installed_helper = include_str!("installed_ops.scm");
+                let prime = format!(
+                    "(catch #t \
+                       (lambda () \
+                         (for-each \
+                           (lambda (iface) \
+                             (module-use! %libguix-rs-module (resolve-interface iface))) \
+                           '((guix read-print) (guix channels) (guix profiles) \
+                             (guix packages) (guix utils) (guix describe) (gnu packages))) \
+                         (eval '(begin {channel_helper} {installed_helper} #t) %libguix-rs-module) \
+                         #t) \
+                       (lambda (key . args) #f))\n"
+                );
+                if stdin.write_all(prime.as_bytes()).await.is_err() {
+                    return;
+                }
+                if stdin.flush().await.is_err() {
+                    return;
+                }
+                // Eat the prime form's single (values …) reply.
                 let _ = frame_rx.recv().await;
 
                 while let Some(Request {
@@ -279,40 +306,6 @@ impl Repl {
                 "(fold-packages (lambda (_ acc) acc) #t)",
             )
             .await?;
-        Ok(())
-    }
-
-    /// Lightweight warmup for channel/config/installed-introspection
-    /// ops — loads `(guix read-print)`, `(guix channels)`, `(guix
-    /// profiles)`, `(guix packages)`, `(gnu packages)` (no
-    /// `fold-packages`), and both helper scripts into the persistent
-    /// `libguix-rs` namespace. Sub-second on a warm `.go` cache.
-    ///
-    /// `(gnu packages)` is the facade module; importing it doesn't
-    /// load the ~5000 package definitions (those live in submodules
-    /// loaded lazily on first reference). Channel/installed introspection
-    /// triggers only the submodules for the packages it actually
-    /// resolves — usually a small handful.
-    pub async fn warmup_lightweight(&self) -> Result<(), GuixError> {
-        // Pull in the modules + helper definitions into the persistent
-        // module. We do this as a single persistent eval so the actor's
-        // bootstrap form is also charged here on the cold path.
-        let channel_helper = include_str!("channel_ops.scm");
-        let installed_helper = include_str!("installed_ops.scm");
-        let form = format!(
-            "(begin \
-               (module-use! %libguix-rs-module (resolve-interface '(guix read-print))) \
-               (module-use! %libguix-rs-module (resolve-interface '(guix channels))) \
-               (module-use! %libguix-rs-module (resolve-interface '(guix profiles))) \
-               (module-use! %libguix-rs-module (resolve-interface '(guix packages))) \
-               (module-use! %libguix-rs-module (resolve-interface '(guix utils))) \
-               (module-use! %libguix-rs-module (resolve-interface '(guix describe))) \
-               (module-use! %libguix-rs-module (resolve-interface '(gnu packages))) \
-               {channel_helper} \
-               {installed_helper} \
-               #t)"
-        );
-        let _ = self.eval_persistent(&form).await?;
         Ok(())
     }
 

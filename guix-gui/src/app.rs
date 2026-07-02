@@ -1659,9 +1659,25 @@ impl App {
         let Some(g) = self.guix.clone() else {
             return Task::none();
         };
-        let Some(file) = self.channels.file.clone() else {
-            self.channels.error = Some(crate::t!("channels-no-file-loaded"));
-            return Task::none();
+        let file = match self.channels.file.clone() {
+            Some(f) => f,
+            // Fresh system: adding the first channel seeds a new
+            // channels.scm; removing from a nonexistent file is meaningless.
+            None => match &op {
+                ChannelOp::AddChannel(_) => {
+                    match ChannelsFile::seed(self.settings.channels_source_path.as_deref()) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            self.channels.error = Some(describe_channels_error(&e));
+                            return Task::none();
+                        }
+                    }
+                }
+                ChannelOp::RemoveChannelByName(_) => {
+                    self.channels.error = Some(crate::t!("channels-no-file-loaded"));
+                    return Task::none();
+                }
+            },
         };
         if !file.is_writable() {
             self.channels.error = Some(crate::t!(

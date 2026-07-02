@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.14] - 2026-07-02
+
+### Fixed
+- Adding the first channel on a fresh system now creates channels.scm
+- Channel and installed-by-channel introspection no longer fail with an unbound-variable error
+
 ## [0.1.13] - 2026-07-01
 
 ### Added

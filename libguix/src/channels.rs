@@ -131,6 +131,31 @@ impl ChannelsFile {
         })
     }
 
+    /// Fresh in-memory `channels.scm` seeded with `(cons* %default-channels)`
+    /// for the first-channel create case — nothing is written to disk yet.
+    pub fn seed(path_override: Option<&Path>) -> Result<Self, ChannelsError> {
+        let path = match path_override {
+            Some(p) => p.to_path_buf(),
+            None => default_path()?,
+        };
+        let raw = "(cons* %default-channels)".to_string();
+        let list = parse_channels_list(&raw).map_err(|e| match e {
+            GuixError::Parse(msg) => ChannelsError::ParseError {
+                message: msg,
+                line: None,
+                column: None,
+            },
+            other => ChannelsError::Guix(other),
+        })?;
+        let is_store_managed = resolves_into_store(&path);
+        Ok(ChannelsFile {
+            path,
+            list,
+            raw,
+            is_store_managed,
+        })
+    }
+
     /// `false` when the file resolves into `/gnu/store/...` — those are
     /// immutable. Other failures (permission etc.) are reported on
     /// actual write rather than here.
@@ -160,7 +185,7 @@ impl ChannelsFile {
                   (lambda (port) \
                     (let loop () \
                       (let ((v (read port))) \
-                        (if (eof-object? v) (list 'ok) (loop)))))) ) \
+                        (if (eof-object? v) (list 'ok \"\") (loop)))))) ) \
               (lambda (key . args) \
                 (list 'error 'parse-error \
                       (format #f \"~a: ~a\" key args) #f #f)))"
@@ -637,6 +662,30 @@ fn resolves_into_store(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn seed_yields_empty_writable_non_store_defaults() {
+        // Override into a tempdir so store-managed HOME setups don't skew
+        // the writability assertion.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = dir.path().join("channels.scm");
+        let cf = ChannelsFile::seed(Some(&p)).expect("seed");
+        assert_eq!(cf.raw, "(cons* %default-channels)");
+        assert!(cf.list.channels().is_empty(), "seed has no custom channels");
+        assert!(
+            !cf.is_store_managed,
+            "tempdir seed must not be store-managed"
+        );
+        assert!(cf.is_writable());
+        assert_eq!(cf.path, p);
+    }
+
+    #[test]
+    fn seed_none_resolves_default_path() {
+        let cf = ChannelsFile::seed(None).expect("seed");
+        assert!(cf.path.ends_with(".config/guix/channels.scm"));
+        assert!(cf.list.channels().is_empty());
+    }
 
     #[test]
     fn quote_string_escapes_backslash_and_quote() {

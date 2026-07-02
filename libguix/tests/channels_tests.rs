@@ -226,6 +226,33 @@ async fn validate_synthetic_broken_returns_parse_error() {
 }
 
 // ---------------------------------------------------------------------------
+// Bootstrap priming — the persistent helpers are bound at actor spawn,
+// with no warmup call in between.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn apply_channel_op_helper_is_bound_at_spawn() {
+    let Some(repl) = common::shared_repl_or_skip().await else {
+        return;
+    };
+    // No warmup was called; the helper must already be defined.
+    let form = "(libguix-rs:apply-channel-op \"(cons* %default-channels)\" \
+                 '(add-channel (channel (name (quote foo)) \
+                    (url \"https://example.org/foo\") \
+                    (introduction (make-channel-introduction \"abc\" \
+                      (openpgp-fingerprint \"AA\"))))))";
+    let v = repl.eval_persistent(form).await.expect("eval helper");
+    let head = v
+        .list_iter()
+        .and_then(|mut it| it.next().and_then(|h| h.as_symbol().map(str::to_owned)));
+    assert_eq!(
+        head.as_deref(),
+        Some("ok"),
+        "helper should return an ok payload, got {v:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // AddChannel — end-to-end through the actor + helper.
 // ---------------------------------------------------------------------------
 
@@ -313,13 +340,15 @@ async fn add_channel_duplicate_name_rejected_in_preflight() {
     let (_dir, path) = copy_to_tempdir("list-three.scm");
     let cf = ChannelsFile::read(Some(&path)).await.expect("read");
 
+    // Valid introduction so pre-flight reaches the duplicate-name check
+    // rather than tripping field validation first.
     let dup = Channel {
         name: "guix".into(),
         url: "https://example/guix.git".into(),
         branch: None,
         commit: None,
-        introduction_commit: Some("00".into()),
-        introduction_fingerprint: Some("AA".into()),
+        introduction_commit: Some("0000000000000000000000000000000000000000".into()),
+        introduction_fingerprint: Some("ABCD EF01 2345 6789 ABCD  EF01 2345 6789 ABCD EF01".into()),
     };
 
     // We need a Repl handle for the signature; spawn one or skip.

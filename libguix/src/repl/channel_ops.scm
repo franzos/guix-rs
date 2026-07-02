@@ -2,8 +2,8 @@
 ;;;
 ;;; The Rust side serialises a `ChannelOp` to an op-sexp and evaluates
 ;;;   (libguix-rs:apply-channel-op <source-string> '<op-sexp>)
-;;; in the persistent `libguix-rs` namespace (loaded once via
-;;; `Repl::warmup_lightweight`).
+;;; in the persistent `libguix-rs` namespace (primed once at actor
+;;; bootstrap).
 ;;;
 ;;; Response shape:
 ;;;   (ok "<new-source>")

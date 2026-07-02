@@ -17,8 +17,8 @@
 //!
 //! Performance note: `package-channels` walks the pull-profile manifest
 //! on every invocation (no caching across calls). On a profile with a
-//! few hundred packages this is sub-second after the lightweight warmup,
-//! but it's not free — callers should cache the result.
+//! few hundred packages this is sub-second once the bootstrap-primed
+//! helpers are loaded, but it's not free — callers should cache the result.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
