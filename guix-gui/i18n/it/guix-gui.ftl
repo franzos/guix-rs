@@ -288,6 +288,10 @@ channels-count = { $count ->
    *[other] { $count } canali
 }
 channels-none-in-file = Nessun canale in questo file.
+channels-none-user = Non hai ancora aggiunto alcun canale personale.
+channels-system-title = Dal sistema
+channels-system-blurb = Forniti dalla configurazione del tuo sistema. Gestiscili dove il sistema è configurato, non qui.
+channels-system-tag = sistema
 channels-inherited-title = Inclusi anche dai tuoi canali
 channels-inherited-blurb = Questi provengono dai canali qui sopra e sono gestiti da essi.
 channels-branch = branch: { $branch }
@@ -375,3 +379,4 @@ channels-form-name-required = Il nome è obbligatorio.
 channels-form-url-required = L'URL è obbligatorio.
 channels-form-intro-required = Il commit di introduzione e la fingerprint sono obbligatori.
 channels-vanished-after-write = channels.scm è scomparso dopo la scrittura — aggiorna la scheda.
+channels-reverted-to-baseline = Rimosso il tuo ultimo canale. I tuoi canali di sistema sono di nuovo attivi.

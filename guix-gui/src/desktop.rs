@@ -26,12 +26,14 @@ struct Cmd {
 }
 
 enum Mode {
-    /// Run to completion, await exit with a timeout guard (KDE, XFCE).
+    /// Run to completion, await exit with a timeout guard (KDE).
     Complete,
     /// Spawn detached and drop the Child; the binary daemonizes (MATE).
     Daemon,
     /// Kill the existing panel and relaunch it (LXQt).
     Restart,
+    /// Restart only if alive, then verify it came back and relaunch if not (XFCE).
+    RestartVerify,
 }
 
 struct Refresh {
@@ -108,7 +110,7 @@ fn plan_for(de: DesktopEnv) -> Option<Refresh> {
                 prog: "xfce4-panel",
                 args: &["-r"],
             }],
-            mode: Mode::Complete,
+            mode: Mode::RestartVerify,
         }),
         DesktopEnv::Mate => Some(Refresh {
             candidates: &[Cmd {
@@ -165,6 +167,7 @@ pub async fn refresh_application_menu(enabled: bool) -> MenuRefresh {
         Mode::Complete => run_complete(de, chosen).await,
         Mode::Daemon => spawn_daemon(de, chosen),
         Mode::Restart => restart_panel(de, chosen.prog),
+        Mode::RestartVerify => restart_verify(de, chosen).await,
     }
 }
 
@@ -214,6 +217,84 @@ fn restart_panel(de: DesktopEnv, bin: &str) -> MenuRefresh {
     }
 }
 
+/// XFCE: `xfce4-panel -r` returns before the panel re-execs and does nothing
+/// against a dead panel, so verify liveness before and after, relaunching if
+/// the restart dropped it.
+async fn restart_verify(de: DesktopEnv, cmd: &Cmd) -> MenuRefresh {
+    const PANEL: &str = "xfce4-panel";
+
+    // Never fire `-r` at a dead panel: it hangs and starts nothing.
+    if !process_alive(PANEL) {
+        return MenuRefresh::NotNeeded(de);
+    }
+
+    let mut c = Command::new(cmd.prog);
+    c.args(cmd.args)
+        .env("LC_ALL", "C")
+        .env("LANG", "C")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let _ = tokio::time::timeout(Duration::from_secs(10), c.output()).await;
+
+    // `-r` returns before the panel re-execs, so the old panel is still alive
+    // right now. Checking on-sight would see it and report success before a
+    // doomed restart has had time to die; let it settle, then check once.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    if process_alive(PANEL) {
+        return MenuRefresh::Refreshed(de);
+    }
+
+    let mut relaunch = Command::new(PANEL);
+    relaunch
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Err(e) = relaunch.spawn() {
+        return MenuRefresh::Failed(de, format!("relaunch {PANEL} failed: {e}"));
+    }
+
+    if wait_alive(PANEL, Duration::from_secs(2)).await {
+        MenuRefresh::Refreshed(de)
+    } else {
+        MenuRefresh::Failed(de, format!("{PANEL} did not come back"))
+    }
+}
+
+/// Poll for a live process every 100ms up to `budget`, returning early on sight.
+async fn wait_alive(name: &str, budget: Duration) -> bool {
+    let deadline = std::time::Instant::now() + budget;
+    loop {
+        if process_alive(name) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// True if any `/proc/<pid>/comm` matches `name`. Dependency-free, no pgrep.
+fn process_alive(name: &str) -> bool {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        if let Ok(comm) = std::fs::read_to_string(entry.path().join("comm")) {
+            if comm_matches(&comm, name) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// `/proc/<pid>/comm` carries a trailing newline; trim it before comparing.
+fn comm_matches(comm_file_contents: &str, target: &str) -> bool {
+    comm_file_contents.trim_end_matches('\n') == target
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,6 +342,14 @@ mod tests {
             plan_for(DesktopEnv::Lxqt).unwrap().candidates[0].prog,
             "lxqt-panel"
         );
+    }
+
+    #[test]
+    fn comm_matches_cases() {
+        assert!(comm_matches("xfce4-panel", "xfce4-panel"));
+        assert!(comm_matches("xfce4-panel\n", "xfce4-panel"));
+        assert!(!comm_matches("xfce4-session\n", "xfce4-panel"));
+        assert!(!comm_matches("", "xfce4-panel"));
     }
 
     #[test]

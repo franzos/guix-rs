@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.16] - 2026-07-04
+
+### Fixed
+- XFCE panel no longer disappears after the app-menu refresh
+- System-channels view now translated in all locales
+
 ## [0.1.15] - 2026-07-03
 
 ### Fixed
