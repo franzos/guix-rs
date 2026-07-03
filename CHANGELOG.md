@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.15] - 2026-07-03
+
+### Fixed
+- Adding a channel no longer drops system channels from `guix pull`
+- Removing the last channel reverts to the system baseline
+
+### Changed
+- System channels shown read-only, separate from your own
+
 ## [0.1.14] - 2026-07-02
 
 ### Fixed

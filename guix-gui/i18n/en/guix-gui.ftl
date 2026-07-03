@@ -298,6 +298,10 @@ channels-count = { $count ->
    *[other] { $count } channels
 }
 channels-none-in-file = No channels in this file.
+channels-none-user = You haven't added any channels of your own yet.
+channels-system-title = From system
+channels-system-blurb = Provided by your system configuration. Manage these where the system is configured, not here.
+channels-system-tag = system
 channels-inherited-title = Also pulled in by your channels
 channels-inherited-blurb = These come from the channels above and are managed by them.
 channels-branch = branch: { $branch }
@@ -387,3 +391,4 @@ channels-form-name-required = Name is required.
 channels-form-url-required = URL is required.
 channels-form-intro-required = Introduction commit and fingerprint are required.
 channels-vanished-after-write = channels.scm vanished after write — refresh the tab.
+channels-reverted-to-baseline = Removed your last channel. Your system channels are back in effect.

@@ -7,13 +7,13 @@ use iced::{Alignment, Element, Length, Subscription, Task, Theme};
 use libguix::{
     CancelHandle, Channel, ChannelOp, ChannelsFile, Guix, GuixError, InstalledPackage, KnownBug,
     Operation, PackageSummary, ProgressEvent, ProgressStream, PullOps, ReconfigureOptions,
-    SearchFastResult, SystemPullOptions, DEFAULT_SEARCH_LIMIT,
+    SearchFastResult, SystemBaseline, SystemPullOptions, DEFAULT_SEARCH_LIMIT,
 };
 
 use crate::app_metadata::{AppMetadata, MetadataClient};
 use crate::carrier::Carrier;
 use crate::channels::{
-    describe_channels_error, load_channels_file, outcome_to_result, ChannelsFileLoad,
+    describe_channels_error, load_channels_file, outcome_to_result, ApplyOutcome, ChannelsFileLoad,
     ChannelsFileLoadOutcome, ChannelsState, ChannelsSubMode, RollbackOffer,
 };
 use crate::operation_subscription::{operation_subscription, OpEvent, OpId, OpKind, SharedOp};
@@ -239,7 +239,7 @@ pub enum Message {
     ChannelsAddCommitChanged(String),
     ChannelsAddIntroCommitChanged(String),
     ChannelsAddIntroFprChanged(String),
-    ChannelsApplyCompleted(Result<ChannelsFileLoad, String>),
+    ChannelsApplyCompleted(Result<ApplyOutcome, String>),
     ChannelsToastDismissed,
     /// Best-effort introspection that maps installed packages to their
     /// source channel — backs the Remove warning dialog. On failure
@@ -777,6 +777,7 @@ impl App {
                     ChannelsFileLoadOutcome::Loaded(load) => {
                         self.channels.file = Some(load.file);
                         self.channels.backup_path = load.backup_path;
+                        self.channels.baseline = Some(load.baseline);
                         self.channels.error = None;
                     }
                     // Missing file is the empty state — let the user
@@ -834,6 +835,7 @@ impl App {
                 self.channels.saving = false;
                 self.channels.file = Some(load.file);
                 self.channels.backup_path = load.backup_path;
+                self.channels.baseline = Some(load.baseline);
                 self.channels.error = None;
                 self.channels.last_message = Some(crate::t!("channels-restored"));
                 Task::none()
@@ -880,10 +882,11 @@ impl App {
                 self.channels.add_form.intro_fpr = s;
                 Task::none()
             }
-            Message::ChannelsApplyCompleted(Ok(load)) => {
+            Message::ChannelsApplyCompleted(Ok(ApplyOutcome::Written(load))) => {
                 self.channels.saving = false;
                 self.channels.file = Some(load.file);
                 self.channels.backup_path = load.backup_path;
+                self.channels.baseline = Some(load.baseline);
                 self.channels.error = None;
                 self.channels.add_form.clear();
                 // Pop the install pairing so a later add (without
@@ -899,9 +902,28 @@ impl App {
                 }
                 Task::none()
             }
+            Message::ChannelsApplyCompleted(Ok(ApplyOutcome::RevertedToBaseline)) => {
+                self.channels.saving = false;
+                // File is gone; guix pull now uses /etc. Drop the in-memory
+                // file, which renders the empty state (baseline isn't shown here).
+                self.channels.file = None;
+                self.channels.backup_path = None;
+                self.channels.error = None;
+                self.channels.last_message = Some(crate::t!("channels-reverted-to-baseline"));
+                Task::none()
+            }
             Message::ChannelsApplyCompleted(Err(e)) => {
                 self.channels.saving = false;
                 self.channels.error = Some(e);
+                // A failed apply may have left a half-written or
+                // unreadable file; offer restore when a backup exists so
+                // the user isn't stranded on a raw parse error.
+                if self.channels.backup_path.is_some() {
+                    self.channels.rollback_offer = Some(RollbackOffer {
+                        backup_path: self.channels.backup_path.clone(),
+                        bug: None,
+                    });
+                }
                 Task::none()
             }
             Message::ChannelsToastDismissed => {
@@ -1659,40 +1681,48 @@ impl App {
         let Some(g) = self.guix.clone() else {
             return Task::none();
         };
+        // Fresh system: adding the first channel seeds a new channels.scm
+        // from the system baseline (async read); removing from a
+        // nonexistent file is meaningless.
         let file = match self.channels.file.clone() {
-            Some(f) => f,
-            // Fresh system: adding the first channel seeds a new
-            // channels.scm; removing from a nonexistent file is meaningless.
+            Some(f) => Some(f),
             None => match &op {
-                ChannelOp::AddChannel(_) => {
-                    match ChannelsFile::seed(self.settings.channels_source_path.as_deref()) {
-                        Ok(f) => f,
-                        Err(e) => {
-                            self.channels.error = Some(describe_channels_error(&e));
-                            return Task::none();
-                        }
-                    }
-                }
+                ChannelOp::AddChannel(_) => None,
                 ChannelOp::RemoveChannelByName(_) => {
                     self.channels.error = Some(crate::t!("channels-no-file-loaded"));
                     return Task::none();
                 }
             },
         };
-        if !file.is_writable() {
-            self.channels.error = Some(crate::t!(
-                "channels-store-managed-error",
-                path = file.path.display().to_string()
-            ));
-            return Task::none();
+        // Store-managed refusal is enforced by `write_atomic`; a freshly
+        // seeded file lives on a user-owned path so this guard only
+        // applies to an already-loaded file.
+        if let Some(f) = &file {
+            if !f.is_writable() {
+                self.channels.error = Some(crate::t!(
+                    "channels-store-managed-error",
+                    path = f.path.display().to_string()
+                ));
+                return Task::none();
+            }
         }
         self.channels.saving = true;
         self.channels.error = None;
         self.channels.last_message = None;
         let path_override = self.settings.channels_source_path.clone();
+        let baseline = self.channels.baseline.clone();
         Task::perform(
             async move {
                 let repl = g.repl().await.map_err(|e| format!("{e}"))?;
+                let file = match file {
+                    Some(f) => f,
+                    None => {
+                        let baseline = SystemBaseline::read(None, None).await;
+                        ChannelsFile::seed_with_baseline(path_override.as_deref(), &baseline)
+                            .map_err(|e| describe_channels_error(&e))?
+                    }
+                };
+                let is_remove = matches!(op, ChannelOp::RemoveChannelByName(_));
                 let new_source = file
                     .apply(&repl, op)
                     .await
@@ -1700,6 +1730,23 @@ impl App {
                 ChannelsFile::validate(&repl, &new_source)
                     .await
                     .map_err(|e| describe_channels_error(&e))?;
+                if is_remove {
+                    // Removing the last user channel while /etc supplies the
+                    // baseline: delete the file so guix pull self-heals to
+                    // /etc instead of writing an empty channels list.
+                    if let Ok(list) = libguix::parse_channels_list(&new_source) {
+                        let user_left =
+                            crate::channels::user_channel_count(&list, baseline.as_ref());
+                        let etc_present =
+                            baseline.as_ref().is_some_and(SystemBaseline::etc_present);
+                        if user_left == 0 && etc_present {
+                            tokio::fs::remove_file(&file.path)
+                                .await
+                                .map_err(|e| format!("{e}"))?;
+                            return Ok(ApplyOutcome::RevertedToBaseline);
+                        }
+                    }
+                }
                 file.write_atomic(&new_source)
                     .await
                     .map_err(|e| describe_channels_error(&e))?;
@@ -1707,6 +1754,7 @@ impl App {
                 // source is what we just wrote, but rereading also picks
                 // up any normalisation the pretty-printer applied).
                 outcome_to_result(load_channels_file(path_override).await)
+                    .map(ApplyOutcome::Written)
             },
             Message::ChannelsApplyCompleted,
         )

@@ -139,10 +139,9 @@
 ;; any immediately preceding <blank>/<comment> records (so inline
 ;; alternate-URL comments attached to the channel go with it).
 ;;
-;; If the matched element is the only channel in a `cons` form, the
-;; result becomes the bare `%default-channels` symbol — Guile evaluates
-;; that as the default channels list. Same for `cons*` collapsing down
-;; to just `%default-channels`.
+;; If the matched element is the only channel in a `cons`/`cons*` form,
+;; the result collapses to `(cons* %default-channels)`, a form our own
+;; parser re-reads (the bare `%default-channels` symbol does not).
 (define (libguix-rs:op-remove-channel-by-name channels-form name-sym)
   (let* ((head (car channels-form))
          (elements (cdr channels-form))
@@ -172,9 +171,10 @@
         (cond
          ((and (or (eq? head 'cons) (eq? head 'cons*))
                ;; If only `%default-channels` (+ optional blanks) remain,
-               ;; collapse to the bare symbol.
+               ;; collapse to `(cons* %default-channels)`, a form our own
+               ;; parser re-reads (the bare symbol is not).
                (libguix-rs:only-default-channels? new-elements))
-          '%default-channels)
+          (list 'cons* '%default-channels))
          ((eq? head 'cons)
           ;; `cons` requires exactly two args. If a non-tail element was
           ;; removed and we now have just one non-blank custom channel

@@ -3,7 +3,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use libguix::{Channel, ChannelsError, ChannelsFile, InstalledPackage, KnownBug};
+use libguix::{
+    Channel, ChannelsError, ChannelsFile, ChannelsList, InstalledPackage, KnownBug, SystemBaseline,
+};
 
 use guix_gui::discovery::{DiscoveredChannel, DiscoveredPackage, Discovery};
 
@@ -13,6 +15,7 @@ use guix_gui::discovery::{DiscoveredChannel, DiscoveredPackage, Discovery};
 pub struct ChannelsFileLoad {
     pub file: ChannelsFile,
     pub backup_path: Option<PathBuf>,
+    pub baseline: SystemBaseline,
 }
 
 /// Carrying `Missing` separately from `Failed` lets the view render
@@ -24,9 +27,20 @@ pub enum ChannelsFileLoadOutcome {
     Failed(String),
 }
 
+/// A channels apply either writes a new file, or (when removing the last
+/// user channel while /etc supplies the baseline) deletes the user file so
+/// guix pull self-heals to /etc.
+#[derive(Debug, Clone)]
+pub enum ApplyOutcome {
+    Written(ChannelsFileLoad),
+    RevertedToBaseline,
+}
+
 #[derive(Default)]
 pub struct ChannelsState {
     pub file: Option<ChannelsFile>,
+    /// System baseline, loaded alongside `file`; channels found here are read-only.
+    pub baseline: Option<SystemBaseline>,
     pub loading: bool,
     pub saving: bool,
     pub error: Option<String>,
@@ -162,5 +176,23 @@ pub async fn load_channels_file(path_override: Option<PathBuf>) -> ChannelsFileL
         Ok(_) => Some(bak),
         Err(_) => None,
     };
-    ChannelsFileLoadOutcome::Loaded(ChannelsFileLoad { file, backup_path })
+    let baseline = SystemBaseline::read(None, None).await;
+    ChannelsFileLoadOutcome::Loaded(ChannelsFileLoad {
+        file,
+        backup_path,
+        baseline,
+    })
+}
+
+/// A file channel is "system" (read-only) when its name is in the baseline; unknown baseline (None) means treat everything as user's.
+pub fn is_system_channel(baseline: Option<&SystemBaseline>, name: &str) -> bool {
+    baseline.map(|b| b.contains(name)).unwrap_or(false)
+}
+
+/// Count of the user's own channels in a parsed list (those not in the baseline).
+pub fn user_channel_count(list: &ChannelsList, baseline: Option<&SystemBaseline>) -> usize {
+    list.channels()
+        .iter()
+        .filter(|c| !is_system_channel(baseline, &c.name))
+        .count()
 }

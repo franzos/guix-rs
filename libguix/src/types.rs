@@ -54,6 +54,38 @@ pub struct Channel {
     pub introduction_fingerprint: Option<String>,
 }
 
+impl Channel {
+    /// Returns a copy with the commit pin removed so the channel tracks
+    /// its branch. Used when materializing commit-pinned provenance
+    /// channels into a user-editable channels.scm.
+    pub fn without_commit(mut self) -> Self {
+        self.commit = None;
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn without_commit_clears_only_the_commit() {
+        let ch = Channel {
+            name: "pantherx".into(),
+            url: "https://codeberg.org/gofranz/panther.git".into(),
+            branch: Some("master".into()),
+            commit: Some("deadbeef".into()),
+            introduction_commit: Some("54b4".into()),
+            introduction_fingerprint: Some("A36A".into()),
+        };
+        let stripped = ch.clone().without_commit();
+        assert_eq!(stripped.commit, None);
+        assert_eq!(stripped.branch, ch.branch);
+        assert_eq!(stripped.introduction_commit, ch.introduction_commit);
+        assert_eq!(stripped.name, ch.name);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProgressStream {
     Stdout,

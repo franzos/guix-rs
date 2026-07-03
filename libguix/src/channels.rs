@@ -156,6 +156,44 @@ impl ChannelsFile {
         })
     }
 
+    /// Seeds an in-memory `channels.scm` from the system baseline so the
+    /// user's first custom channel layers on top of the system channels
+    /// instead of shadowing them. Empty baseline falls back to the plain
+    /// `(cons* %default-channels)` seed (foreign distro / upstream Guix).
+    pub fn seed_with_baseline(
+        path_override: Option<&Path>,
+        baseline: &crate::system_channels::SystemBaseline,
+    ) -> Result<Self, ChannelsError> {
+        if baseline.channels.is_empty() {
+            return Self::seed(path_override);
+        }
+        let path = match path_override {
+            Some(p) => p.to_path_buf(),
+            None => default_path()?,
+        };
+        let mut raw = String::from("(list");
+        for c in &baseline.channels {
+            raw.push(' ');
+            raw.push_str(&channel_to_sexp(c));
+        }
+        raw.push(')');
+        let list = parse_channels_list(&raw).map_err(|e| match e {
+            GuixError::Parse(msg) => ChannelsError::ParseError {
+                message: msg,
+                line: None,
+                column: None,
+            },
+            other => ChannelsError::Guix(other),
+        })?;
+        let is_store_managed = resolves_into_store(&path);
+        Ok(ChannelsFile {
+            path,
+            list,
+            raw,
+            is_store_managed,
+        })
+    }
+
     /// `false` when the file resolves into `/gnu/store/...` — those are
     /// immutable. Other failures (permission etc.) are reported on
     /// actual write rather than here.
@@ -857,6 +895,54 @@ mod tests {
         let p = dir.path().join("channels.scm");
         std::fs::write(&p, "(list)").expect("write");
         assert!(!resolves_into_store(&p));
+    }
+
+    #[test]
+    fn seed_with_empty_baseline_matches_plain_seed() {
+        use crate::system_channels::{BaselineSource, SystemBaseline};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = dir.path().join("channels.scm");
+        let baseline = SystemBaseline {
+            channels: Vec::new(),
+            source: BaselineSource::Defaults,
+        };
+        let cf = ChannelsFile::seed_with_baseline(Some(&p), &baseline).expect("seed");
+        assert_eq!(cf.raw, "(cons* %default-channels)");
+        assert!(cf.list.channels().is_empty());
+    }
+
+    #[test]
+    fn seed_with_baseline_materializes_channels() {
+        use crate::system_channels::{BaselineSource, SystemBaseline};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = dir.path().join("channels.scm");
+        let baseline = SystemBaseline {
+            channels: vec![
+                Channel {
+                    name: "pantherx".into(),
+                    url: "https://codeberg.org/gofranz/panther.git".into(),
+                    branch: Some("master".into()),
+                    commit: None,
+                    introduction_commit: Some("54b4056ac571611892c743b65f4c47dc298c49da".into()),
+                    introduction_fingerprint: Some("A36A D41E ECC7 A871".into()),
+                },
+                Channel {
+                    name: "guix".into(),
+                    url: "https://git.guix.gnu.org/guix.git".into(),
+                    branch: Some("master".into()),
+                    commit: None,
+                    introduction_commit: None,
+                    introduction_fingerprint: None,
+                },
+            ],
+            source: BaselineSource::Etc,
+        };
+        let cf = ChannelsFile::seed_with_baseline(Some(&p), &baseline).expect("seed");
+        // Round-trips through our own parser as two custom channels.
+        let names: Vec<&str> = cf.list.channels().iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["pantherx", "guix"]);
+        assert!(cf.raw.contains("(name 'pantherx)"));
+        assert!(cf.raw.contains("make-channel-introduction"));
     }
 
     /// Pins the `.bak` naming contract — must always yield `scm.bak`

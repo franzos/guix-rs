@@ -70,6 +70,7 @@ mod repl;
 mod retry;
 mod shell;
 mod system;
+mod system_channels;
 mod types;
 
 use std::path::{Path, PathBuf};
@@ -95,6 +96,7 @@ pub use shell::{ShellBuilder, ShellOps};
 pub use system::{
     auth_agent_present, InitOptions, ReconfigureOptions, SystemOps, CURRENT_SYSTEM_CONFIG,
 };
+pub use system_channels::{BaselineSource, SystemBaseline};
 pub use types::{
     Channel, Generation, InstalledPackage, KnownBug, PackageDetail, PackageSummary, ProgressEvent,
     ProgressStream,

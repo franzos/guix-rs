@@ -425,29 +425,72 @@ fn installed_list(app: &App) -> Element<'_, Message> {
     let f = app.channels.file.as_ref().expect("file present");
     let channels = f.list.channels();
     let writable = !f.is_store_managed;
-
-    let header = row![text(crate::t!("channels-count", count = channels.len()))
-        .size(12)
-        .color(MUTED),];
+    let baseline = app.channels.baseline.as_ref();
 
     let mut rows: Column<'_, Message> = Column::new().spacing(8);
+    let mut system_rows: Column<'_, Message> = Column::new().spacing(4);
+    let mut user_count = 0usize;
+    let mut has_system = false;
     for c in channels {
-        rows = rows.push(channel_row(app, c, writable));
+        if crate::channels::is_system_channel(baseline, &c.name) {
+            has_system = true;
+            system_rows = system_rows.push(system_channel_row(c));
+        } else {
+            user_count += 1;
+            rows = rows.push(channel_row(app, c, writable));
+        }
     }
-    if channels.is_empty() {
+
+    let header = row![text(crate::t!("channels-count", count = user_count))
+        .size(12)
+        .color(MUTED),];
+    if user_count == 0 {
         rows = rows.push(
+            container(text(crate::t!("channels-none-user")).size(12).color(MUTED))
+                .padding(14)
+                .width(Length::Fill)
+                .style(styles::card_flat),
+        );
+    }
+
+    let mut body = column![header, rows].spacing(8);
+    if has_system {
+        body = body.push(
             container(
-                text(crate::t!("channels-none-in-file"))
-                    .size(12)
-                    .color(MUTED),
+                column![
+                    text(crate::t!("channels-system-title")).size(13).font(BOLD),
+                    text(crate::t!("channels-system-blurb"))
+                        .size(11)
+                        .color(MUTED),
+                    Space::new().height(4),
+                    system_rows,
+                ]
+                .spacing(2),
             )
             .padding(14)
             .width(Length::Fill)
             .style(styles::card_flat),
         );
     }
+    body.into()
+}
 
-    column![header, rows].spacing(8).into()
+/// Read-only presentation of a system-baseline channel: name + url and a
+/// "system" tag, no Remove button. The user manages these through the
+/// system config, not here.
+fn system_channel_row<'a>(ch: &'a Channel) -> Element<'a, Message> {
+    let mut entry: Column<'_, Message> = Column::new().spacing(1).push(
+        row![
+            text(ch.name.clone()).size(12).color(MUTED),
+            Space::new().width(Length::Fill),
+            text(crate::t!("channels-system-tag")).size(10).color(MUTED),
+        ]
+        .align_y(iced::Alignment::Center),
+    );
+    if !ch.url.is_empty() {
+        entry = entry.push(text(ch.url.clone()).size(11).color(MUTED));
+    }
+    entry.into()
 }
 
 /// Lists channels that `guix describe` reports but the user's `channels.scm`

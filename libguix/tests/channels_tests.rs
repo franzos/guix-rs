@@ -454,6 +454,27 @@ async fn remove_only_channel_from_cons_single_collapses() {
 }
 
 #[tokio::test]
+async fn remove_only_channel_collapse_output_reparses() {
+    let Some(repl) = common::shared_repl_or_skip().await else {
+        return;
+    };
+    let (_dir, path) = copy_to_tempdir("cons-single.scm");
+    let cf = ChannelsFile::read(Some(&path)).await.expect("read");
+    let target = cf.list.channels()[0].name.clone();
+    let new_src = cf
+        .apply(&repl, ChannelOp::RemoveChannelByName(target))
+        .await
+        .expect("apply remove");
+    // The exact failure the user hit: collapse output must re-read through our
+    // own parser, not just Guile's `read`.
+    let parsed = libguix::parse_channels_list(&new_src).expect("collapsed output must re-parse");
+    assert!(
+        parsed.channels().is_empty(),
+        "collapse leaves zero custom channels: {new_src}"
+    );
+}
+
+#[tokio::test]
 async fn remove_channel_returns_not_found_for_unknown_name() {
     let (_dir, path) = copy_to_tempdir("list-three.scm");
     let cf = ChannelsFile::read(Some(&path)).await.expect("read");

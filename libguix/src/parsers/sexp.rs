@@ -48,6 +48,12 @@ pub fn parse_channels_list(input: &str) -> Result<ChannelsList, GuixError> {
     for v in parser.value_iter() {
         let val = v.map_err(|e| GuixError::Parse(format!("channels: lexpr parse: {e}")))?;
 
+        // A bare `%default-channels` is valid Scheme (guix evaluates it to the
+        // default channel list); accept it as an empty WithDefaults.
+        if val.as_symbol() == Some("%default-channels") {
+            return Ok(ChannelsList::WithDefaults(Vec::new()));
+        }
+
         let head = match val
             .list_iter()
             .and_then(|mut it| it.next().and_then(|h| h.as_symbol().map(str::to_owned)))
@@ -348,6 +354,14 @@ mod tests {
             ChannelsList::Explicit(v) => assert_eq!(v.len(), 2),
             other @ ChannelsList::WithDefaults(_) => panic!("expected Explicit, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_bare_default_channels_symbol() {
+        // Files broken in the wild may hold just the bare symbol; guix pull
+        // accepts it, so we must too.
+        let parsed = parse_channels_list("%default-channels").expect("bare symbol parses");
+        assert!(matches!(parsed, ChannelsList::WithDefaults(v) if v.is_empty()));
     }
 
     #[test]
