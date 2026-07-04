@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use nix::sys::signal::{kill, Signal};
+use nix::sys::signal::{kill, killpg, Signal};
 use nix::unistd::Pid;
 use tokio::process::Child;
 use tokio::time::timeout;
@@ -11,7 +11,12 @@ use tokio::time::timeout;
 pub(crate) const KILL_GRACE: Duration = Duration::from_secs(5);
 
 /// Exit code encoded `128 + signum` on signal-termination.
-pub(crate) async fn graceful_kill(child: &mut Child) -> Option<i32> {
+///
+/// `kill_group`: the child is its own process-group leader (spawned with
+/// `setsid`), so signal the whole group. `guix pull` forks git/substitute
+/// workers that hold the event pipe open; killing only the leader leaves
+/// them alive and the reader never sees EOF.
+pub(crate) async fn graceful_kill(child: &mut Child, kill_group: bool) -> Option<i32> {
     match child.try_wait() {
         Ok(Some(status)) => return Some(status_to_code(status)),
         Ok(None) => {}
@@ -27,15 +32,25 @@ pub(crate) async fn graceful_kill(child: &mut Child) -> Option<i32> {
     let pid = Pid::from_raw(pid_i32);
 
     // ESRCH is fine — child may have exited between try_wait and kill.
-    let _ = kill(pid, Signal::SIGTERM);
+    signal(pid, Signal::SIGTERM, kill_group);
 
     match timeout(KILL_GRACE, child.wait()).await {
         Ok(Ok(status)) => Some(status_to_code(status)),
         Ok(Err(_)) => None,
         Err(_) => {
+            signal(pid, Signal::SIGKILL, kill_group);
             let _ = child.start_kill();
             child.wait().await.ok().map(status_to_code)
         }
+    }
+}
+
+fn signal(pid: Pid, sig: Signal, group: bool) {
+    if group {
+        // Leader shares the group, so this reaches it and every worker.
+        let _ = killpg(pid, sig);
+    } else {
+        let _ = kill(pid, sig);
     }
 }
 

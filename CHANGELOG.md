@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.17] - 2026-07-04
+
+### Fixed
+- Cancelling a channel update now stops promptly instead of freezing
+- Channel changes apply to package search after a pull without a restart
+
 ## [0.1.16] - 2026-07-04
 
 ### Fixed

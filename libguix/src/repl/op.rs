@@ -40,6 +40,12 @@ pub(crate) fn spawn_repl_op(binary: &Path, scheme_payload: &str) -> Result<Opera
             if libc::dup2(write_fd_raw, 3) == -1 {
                 return Err(io::Error::last_os_error());
             }
+            // New session/process group so cancel can signal the whole
+            // tree — `guix pull` forks git/substitute workers that hold
+            // the fd-3 event pipe open until they die.
+            if libc::setsid() == -1 {
+                return Err(io::Error::last_os_error());
+            }
             Ok(())
         });
     }
@@ -99,6 +105,7 @@ pub(crate) fn spawn_repl_op(binary: &Path, scheme_payload: &str) -> Result<Opera
         known_bugs,
         ExitClassifier::Standard,
         started,
+        true,
     ))
 }
 

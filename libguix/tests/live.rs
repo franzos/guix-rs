@@ -58,6 +58,39 @@ async fn repl_eval_simple() {
     assert_eq!(v.as_i64(), Some(3));
 }
 
+/// `refresh_repl` must retire the cached actor so a post-pull profile
+/// change is picked up. Observe the swap via the child's own pid: a
+/// second `repl()` after refresh is a different process, and the old
+/// handle keeps working independently until dropped.
+#[tokio::test]
+async fn refresh_repl_swaps_the_process() {
+    let g = Guix::discover().await.expect("discover");
+
+    let r1 = g.repl().await.expect("repl spawn");
+    let pid1 = r1
+        .eval("(getpid)")
+        .await
+        .expect("getpid 1")
+        .as_i64()
+        .expect("pid is int");
+
+    g.refresh_repl();
+
+    let r2 = g.repl().await.expect("repl respawn");
+    let pid2 = r2
+        .eval("(getpid)")
+        .await
+        .expect("getpid 2")
+        .as_i64()
+        .expect("pid is int");
+
+    assert_ne!(pid1, pid2, "refresh_repl should spawn a fresh process");
+
+    // The old handle is a separate actor, still alive until we drop it.
+    let old = r1.eval("(getpid)").await.expect("getpid old").as_i64();
+    assert_eq!(old, Some(pid1), "old actor should be unchanged");
+}
+
 #[tokio::test]
 async fn repl_search_fast_hello() {
     let g = Guix::discover().await.expect("discover");

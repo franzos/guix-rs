@@ -26,6 +26,7 @@ app-brand = Guix
 app-lightbox-close = Chiudi (Esc)
 app-lightbox-no-image = nessuna immagine / non riuscita
 app-running = In esecuzione...
+app-cancelling = Annullamento...
 app-copy = Copia
 app-show-log = Mostra log
 app-hide-log = Nascondi log

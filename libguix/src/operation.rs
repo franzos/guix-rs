@@ -205,6 +205,7 @@ pub(crate) fn assemble_operation_from_event_rx(
     known_bugs: Arc<StdMutex<BTreeSet<KnownBug>>>,
     classifier: ExitClassifier,
     started: Instant,
+    kill_group: bool,
 ) -> Operation {
     let (batch_tx, batch_rx) = mpsc::channel::<Vec<ProgressEvent>>(32);
     let coalescer = spawn_coalescer(event_rx, batch_tx.clone());
@@ -212,7 +213,7 @@ pub(crate) fn assemble_operation_from_event_rx(
     let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
 
     let driver = tokio::spawn(async move {
-        drive(child, started, cancel_rx, coalescer, batch_tx).await;
+        drive(child, started, cancel_rx, coalescer, batch_tx, kill_group).await;
     });
 
     let inner = Arc::new(StdMutex::new(Some(CancelInner { cancel_tx, driver })));
@@ -286,7 +287,8 @@ pub(crate) fn spawn_operation_with(
     let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
 
     let driver = tokio::spawn(async move {
-        drive(child, started, cancel_rx, coalescer, batch_tx).await;
+        // Standard `guix` child is not a group leader; signal the pid only.
+        drive(child, started, cancel_rx, coalescer, batch_tx, false).await;
     });
 
     let inner = Arc::new(StdMutex::new(Some(CancelInner { cancel_tx, driver })));
@@ -319,6 +321,7 @@ async fn drive(
     mut cancel_rx: oneshot::Receiver<()>,
     coalescer: JoinHandle<()>,
     batch_tx: mpsc::Sender<Vec<ProgressEvent>>,
+    kill_group: bool,
 ) {
     let exit_code: i32 = tokio::select! {
         wait = child.wait() => {
@@ -328,7 +331,7 @@ async fn drive(
             }
         }
         _ = &mut cancel_rx => {
-            graceful_kill(&mut child).await.unwrap_or(-1)
+            graceful_kill(&mut child, kill_group).await.unwrap_or(-1)
         }
     };
 

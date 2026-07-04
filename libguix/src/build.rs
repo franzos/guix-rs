@@ -260,7 +260,6 @@ impl BuildBuilder {
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use std::sync::Arc;
     use std::time::Duration;
     use tokio::process::Command;
 
@@ -269,7 +268,7 @@ mod tests {
             binary: PathBuf::from("/nonexistent/fake-guix"),
             version: "0".into(),
             profile: None,
-            repl: Arc::new(tokio::sync::OnceCell::new()),
+            repl: crate::new_repl_cell(),
             repl_timeout: Duration::from_secs(30),
         }
     }

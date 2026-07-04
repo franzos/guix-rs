@@ -105,12 +105,12 @@ pub use types::{
 #[doc(hidden)]
 pub mod __test_support {
     use std::path::PathBuf;
-    use std::sync::Arc;
     use std::time::Duration;
 
     use tokio::process::Command;
 
     use crate::error::GuixError;
+    use crate::new_repl_cell;
     use crate::operation::{spawn_operation_with, ExitClassifier, Operation};
     use crate::pull::PullOps;
     use crate::system::SystemOps;
@@ -133,7 +133,7 @@ pub mod __test_support {
             binary: PathBuf::from("/nonexistent/fake-guix"),
             version: "0".into(),
             profile: None,
-            repl: Arc::new(tokio::sync::OnceCell::new()),
+            repl: new_repl_cell(),
             repl_timeout: Duration::from_secs(30),
         };
         PullOps::new(g)
@@ -148,8 +148,17 @@ pub struct Guix {
     binary: PathBuf,
     version: String,
     profile: Option<PathBuf>,
-    repl: Arc<tokio::sync::OnceCell<Repl>>,
+    /// Boxed in a `Mutex` so [`Guix::refresh_repl`] can swap the whole
+    /// cell atomically after a `guix pull`; the actor caches the pre-pull
+    /// `(gnu packages …)` graph and can't hot-reload it.
+    repl: Arc<std::sync::Mutex<Arc<tokio::sync::OnceCell<Repl>>>>,
     repl_timeout: Duration,
+}
+
+fn new_repl_cell() -> Arc<std::sync::Mutex<Arc<tokio::sync::OnceCell<Repl>>>> {
+    Arc::new(std::sync::Mutex::new(
+        Arc::new(tokio::sync::OnceCell::new()),
+    ))
 }
 
 impl Guix {
@@ -159,7 +168,7 @@ impl Guix {
             binary: d.binary,
             version: d.version,
             profile: None,
-            repl: Arc::new(tokio::sync::OnceCell::new()),
+            repl: new_repl_cell(),
             repl_timeout: DEFAULT_REPL_TIMEOUT,
         })
     }
@@ -230,8 +239,12 @@ impl Guix {
     pub async fn repl(&self) -> Result<Repl, GuixError> {
         let binary = self.binary.clone();
         let timeout = self.repl_timeout;
-        let r = self
+        let cell = self
             .repl
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let r = cell
             .get_or_try_init(|| async move { Repl::spawn(binary, timeout).await })
             .await?;
         Ok(r.clone())
@@ -240,7 +253,26 @@ impl Guix {
     /// Returns `None` if [`Guix::repl`] hasn't completed yet — lets sync
     /// contexts fire-and-forget `interrupt()` without spawning.
     pub fn repl_if_ready(&self) -> Option<Repl> {
-        self.repl.get().cloned()
+        self.repl
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get()
+            .cloned()
+    }
+
+    /// Discard the cached search REPL so the next [`Guix::repl`] spawns a
+    /// fresh actor against the current profile. Call after a user `guix
+    /// pull`: the live actor loaded `(gnu packages …)` for the pre-pull
+    /// channel set and Guile won't hot-reload it, so newly added/removed
+    /// channels stay invisible to search until the actor is replaced.
+    /// In-flight `Repl` clones keep the old process alive until they
+    /// finish, then it is reaped (`kill_on_drop`).
+    pub fn refresh_repl(&self) {
+        let mut guard = self
+            .repl
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *guard = Arc::new(tokio::sync::OnceCell::new());
     }
 
     pub fn system_profile_path() -> PathBuf {

@@ -261,7 +261,12 @@ fn bootstrap_help_block<'a>(app: &'a App) -> Element<'a, Message> {
 fn footer_row<'a>(app: &'a App, op: &'a ActiveOp) -> Element<'a, Message> {
     let mut footer = row![].spacing(8);
 
-    if !op.finished {
+    if op.cancelling && !op.finished {
+        // Kill runs in the background; let the user leave immediately.
+        footer = footer
+            .push(button(text(crate::t!("common-close"))).on_press(Message::DismissOverlay))
+            .push(text(crate::t!("app-cancelling")));
+    } else if !op.finished {
         let supports_cancel = op_supports_cancel(op.kind);
         let on_press = if supports_cancel && op.cancel.is_some() {
             Some(Message::CancelClicked)
@@ -351,6 +356,7 @@ mod tests {
             op_slot: SharedOp::new_empty_for_tests(),
             final_code: None,
             finished: false,
+            cancelling: false,
             bootstrap_likely: false,
             progress,
             channel_shadow_seen: false,

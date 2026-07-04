@@ -26,6 +26,7 @@ app-brand = Guix
 app-lightbox-close = 关闭（Esc）
 app-lightbox-no-image = 无图片 / 加载失败
 app-running = 正在运行……
+app-cancelling = 正在取消……
 app-copy = 复制
 app-show-log = 显示日志
 app-hide-log = 隐藏日志

@@ -88,6 +88,10 @@ pub struct ActiveOp {
     pub op_slot: SharedOp,
     pub final_code: Option<i32>,
     pub finished: bool,
+    /// Set the moment Cancel is clicked. The kill runs in the background;
+    /// the overlay switches to a "Cancelling…" state with Close available
+    /// so the user is never trapped waiting for a wedged process to die.
+    pub cancelling: bool,
     pub bootstrap_likely: bool,
     pub progress: ProgressSummary,
     /// Sticky flag — set the first time we observe
@@ -1296,6 +1300,7 @@ impl App {
                     op_slot: slot,
                     final_code: None,
                     finished: false,
+                    cancelling: false,
                     bootstrap_likely: false,
                     progress: ProgressSummary::new(),
                     channel_shadow_seen: false,
@@ -1384,6 +1389,14 @@ impl App {
                         if (op.kind == OpKind::Pull || op.kind == OpKind::SystemPull)
                             && op.final_code == Some(0)
                 );
+                // A user `guix pull` rewrites `~/.config/guix/current`, so
+                // the cached search REPL must be replaced. A SystemPull
+                // updates root's profile only — the user search REPL is
+                // unaffected, so we don't churn it.
+                let user_pull_succeeded = matches!(
+                    self.active_op.as_ref(),
+                    Some(op) if op.kind == OpKind::Pull && op.final_code == Some(0)
+                );
                 let refresh_after_profile_change = matches!(
                     self.active_op.as_ref(),
                     Some(op)
@@ -1468,6 +1481,7 @@ impl App {
                         let mut tasks: Vec<Task<Message>> = vec![
                             self.spawn_channels_refresh(),
                             self.spawn_pull_mtimes_refresh(),
+                            self.spawn_repl_refresh(),
                         ];
                         if let Some(name) = pending_install {
                             tasks.push(Task::done(Message::InstallRequested(name)));
@@ -1489,10 +1503,14 @@ impl App {
                 }
 
                 if refresh_after_pull {
-                    Task::batch([
+                    let mut tasks = vec![
                         self.spawn_channels_refresh(),
                         self.spawn_pull_mtimes_refresh(),
-                    ])
+                    ];
+                    if user_pull_succeeded {
+                        tasks.push(self.spawn_repl_refresh());
+                    }
+                    Task::batch(tasks)
                 } else if refresh_after_profile_change {
                     Task::batch([
                         self.spawn_installed_refresh(),
@@ -1506,6 +1524,12 @@ impl App {
                 if let Some(op) = self.active_op.as_mut() {
                     if op_supports_cancel(op.kind) {
                         if let Some(cancel) = op.cancel.take() {
+                            // Flip to the cancelling state now — the kill can
+                            // take seconds (a wedged network fetch even longer),
+                            // and the user must be able to close meanwhile. The
+                            // subscription still delivers Finished when the
+                            // process actually dies.
+                            op.cancelling = true;
                             return Task::perform(
                                 async move {
                                     let _ = cancel.cancel().await;
@@ -1539,6 +1563,27 @@ impl App {
                     .map_err(|e| format!("{e}"))
             },
             Message::InstalledLoaded,
+        )
+    }
+
+    /// Retire the cached search REPL and warm a fresh one against the
+    /// post-pull profile. Without this the long-lived actor keeps serving
+    /// searches from the pre-pull `(gnu packages …)` graph, so channels
+    /// added/removed by the pull only take effect after an app restart.
+    fn spawn_repl_refresh(&mut self) -> Task<Message> {
+        let Some(g) = self.guix.clone() else {
+            return Task::none();
+        };
+        g.refresh_repl();
+        self.warmup_done = false;
+        Task::perform(
+            async move {
+                match g.repl().await {
+                    Ok(repl) => repl.warmup().await.map_err(|e| format!("{e}")),
+                    Err(e) => Err(format!("{e}")),
+                }
+            },
+            Message::ReplWarmedUp,
         )
     }
 
@@ -2135,7 +2180,12 @@ impl App {
         let log_scroll = scrollable(log_lines).height(Length::Fill);
 
         let mut footer = row![].spacing(8);
-        if !op.finished {
+        if op.cancelling && !op.finished {
+            // Kill runs in the background; let the user leave immediately.
+            footer = footer
+                .push(button(text(crate::t!("common-close"))).on_press(Message::DismissOverlay))
+                .push(text(crate::t!("app-cancelling")));
+        } else if !op.finished {
             let supports_cancel = op_supports_cancel(op.kind);
             let on_press: Option<Message> = if supports_cancel && op.cancel.is_some() {
                 Some(Message::CancelClicked)
@@ -2331,6 +2381,7 @@ mod tests {
             op_slot: crate::operation_subscription::SharedOp::new_empty_for_tests(),
             final_code: None,
             finished: false,
+            cancelling: false,
             bootstrap_likely: false,
             progress: ProgressSummary::new(),
             channel_shadow_seen: false,
@@ -2353,6 +2404,7 @@ mod tests {
             op_slot: SharedOp::new_empty_for_tests(),
             final_code: None,
             finished: false,
+            cancelling: false,
             bootstrap_likely: false,
             progress: ProgressSummary::new(),
             channel_shadow_seen: false,
@@ -2478,6 +2530,7 @@ mod tests {
             op_slot: SharedOp::new_empty_for_tests(),
             final_code: None,
             finished: false,
+            cancelling: false,
             bootstrap_likely: false,
             progress: ProgressSummary::new(),
             channel_shadow_seen: false,
@@ -2514,6 +2567,7 @@ mod tests {
             op_slot: SharedOp::new_empty_for_tests(),
             final_code,
             finished: false,
+            cancelling: false,
             bootstrap_likely: false,
             progress: ProgressSummary::new(),
             channel_shadow_seen,
@@ -2773,6 +2827,7 @@ mod tests {
             op_slot: SharedOp::new_empty_for_tests(),
             final_code: Some(0),
             finished: false,
+            cancelling: false,
             bootstrap_likely: false,
             progress: ProgressSummary::new(),
             channel_shadow_seen: false,
