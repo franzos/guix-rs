@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.17] - 2026-07-04
+## [0.1.18] - 2026-07-04
 
 ### Fixed
 - Cancelling a channel update now stops promptly instead of freezing
