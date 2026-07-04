@@ -241,10 +241,13 @@ async fn cancel_flushes_pending_window_before_exit_summary() {
     let mut op = operation_from_command(sh("for i in 1 2 3 4 5; do echo line$i; done; sleep 10"))
         .expect("spawn");
 
-    // Wait for the first (idle→windowing) flushed batch to come through;
-    // by then the readers have queued the rest of the lines into the
-    // coalescer's current window.
-    let _first = op.events_mut().next().await.expect("first batch");
+    // Wait for the first flushed batch, then cancel while the child sits
+    // on the sleep. We accumulate the first batch and everything after it:
+    // how the coalescer splits the five lines across batches is timing-
+    // dependent (on a loaded runner they can all land in the first batch),
+    // so the assertion must span every batch, not just the ones after the
+    // first — that split-dependence is what used to make this test flake.
+    let first = op.events_mut().next().await.expect("first batch");
 
     // Cancel — this triggers SIGTERM through the driver. The driver waits
     // on the child *before* sending the final ExitSummary; the readers
@@ -253,26 +256,26 @@ async fn cancel_flushes_pending_window_before_exit_summary() {
     let cancel = op.take_cancel().expect("cancel present");
     let cancel_task = tokio::spawn(async move { cancel.cancel().await });
 
-    let mut rest: Vec<ProgressEvent> = Vec::new();
+    let mut all: Vec<ProgressEvent> = first;
     while let Some(batch) = op.events_mut().next().await {
-        rest.extend(batch);
+        all.extend(batch);
     }
     let _ = cancel_task.await;
 
     // The final event must be ExitSummary.
-    match rest.last().unwrap() {
+    match all.last().unwrap() {
         ProgressEvent::ExitSummary { .. } => {}
         other => panic!("expected ExitSummary last, got {other:?}"),
     }
-    // We must have seen at least one "line<n>" Line event AFTER the first
-    // batch (i.e. flushed from the pending window).
-    let line_count = rest
+    // Every queued "line<n>" event must have flushed before the summary —
+    // none dropped by the cancel path.
+    let line_count = all
         .iter()
         .filter(|e| matches!(e, ProgressEvent::Line { text, .. } if text.starts_with("line")))
         .count();
-    assert!(
-        line_count >= 1,
-        "expected pending-window flush of line<n> events, got {rest:?}",
+    assert_eq!(
+        line_count, 5,
+        "expected all five line<n> events flushed before ExitSummary, got {all:?}",
     );
 }
 
