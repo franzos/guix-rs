@@ -21,6 +21,25 @@ pub fn view(app: &App) -> Element<'_, Message> {
 
     let mut content: Column<'_, Message> = column![header, subtitle].spacing(8);
 
+    if super::updates::never_updated(app) {
+        let note = text(crate::t!("updates-all-blurb-never"))
+            .size(13)
+            .color(TEXT)
+            .width(Length::Fill);
+        let banner = row![
+            note,
+            super::updates::update_all_button(app.active_op.is_some())
+        ]
+        .spacing(12)
+        .align_y(iced::Alignment::Center);
+        content = content.push(
+            container(banner)
+                .padding(16)
+                .width(Length::Fill)
+                .style(crate::styles::card),
+        );
+    }
+
     for (cat, apps) in recommended::grouped() {
         // Only channel-gated tiles hide; others fall back to a letter tile.
         let visible: Vec<&RecommendedApp> = apps

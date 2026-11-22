@@ -173,6 +173,17 @@ impl Guix {
         })
     }
 
+    /// Re-resolves the binary: a first `guix pull` creates
+    /// `~/.config/guix/current`, which then takes over from the system guix.
+    pub fn rebind(&mut self) {
+        if let Ok(binary) = discover::resolve_binary() {
+            if binary != self.binary {
+                self.binary = binary;
+                self.repl = new_repl_cell();
+            }
+        }
+    }
+
     pub fn with_profile(mut self, profile: impl Into<PathBuf>) -> Self {
         self.profile = Some(profile.into());
         self
@@ -245,7 +256,7 @@ impl Guix {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         let r = cell
-            .get_or_try_init(|| async move { Repl::spawn(binary, timeout).await })
+            .get_or_try_init(|| async move { Repl::spawn(binary, timeout) })
             .await?;
         Ok(r.clone())
     }

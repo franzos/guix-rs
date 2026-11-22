@@ -51,6 +51,19 @@ impl SystemOps {
         self.spawn_system_op(&args, opts.privilege)
     }
 
+    /// `guix time-machine -- system reconfigure …`: fetches the latest
+    /// channels and reconfigures with them. A plain [`Self::reconfigure`]
+    /// under `pkexec` runs the system guix, which only knows the package
+    /// versions it was built with.
+    pub fn reconfigure_latest(
+        &self,
+        config: &Path,
+        opts: ReconfigureOptions,
+    ) -> Result<Operation, GuixError> {
+        let args = build_reconfigure_latest_args(config, &opts);
+        self.spawn_system_op(&args, opts.privilege)
+    }
+
     /// `guix system init <config> <target>` — populates a freshly-mounted
     /// root (the installer uses `/mnt`). Identical progress output to
     /// `reconfigure`, so the same stderr parser covers it.
@@ -89,6 +102,13 @@ fn build_reconfigure_args(config: &Path, opts: &ReconfigureOptions) -> Vec<Strin
         args.push("--allow-downgrades".into());
     }
     args.push(config.to_string_lossy().into_owned());
+    args
+}
+
+/// `time-machine` MUST stay in argv position 1 — polkit binds it.
+fn build_reconfigure_latest_args(config: &Path, opts: &ReconfigureOptions) -> Vec<String> {
+    let mut args: Vec<String> = vec!["time-machine".into(), "--".into()];
+    args.extend(build_reconfigure_args(config, opts));
     args
 }
 
@@ -265,6 +285,22 @@ mod tests {
     }
 
     /// Pins polkit `argv1=system argv2=reconfigure` invariant under -L flags.
+    #[test]
+    fn reconfigure_latest_args_wrap_time_machine() {
+        let cfg = PathBuf::from("/etc/system.scm");
+        let args = build_reconfigure_latest_args(&cfg, &ReconfigureOptions::default());
+        assert_eq!(
+            args,
+            vec![
+                "time-machine",
+                "--",
+                "system",
+                "reconfigure",
+                "/etc/system.scm"
+            ]
+        );
+    }
+
     #[test]
     fn reconfigure_args_include_load_paths() {
         let cfg = PathBuf::from("/home/me/dotfiles/system/framework.scm");

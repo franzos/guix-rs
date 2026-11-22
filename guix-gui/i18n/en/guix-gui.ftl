@@ -130,18 +130,25 @@ installed-error = Error: { $error }
 
 # -- updates --
 updates-title = Updates
+updates-all-title = Update everything
+updates-all-blurb = Get the latest apps, updates for your installed packages and system updates in one go.
+updates-all-blurb-never = You're seeing the apps that came with your installer. Update to get the latest versions and security fixes.
+updates-all-no-system = System updates are skipped until a system configuration is set in Settings.
+updates-all-button = Update everything
+updates-advanced-show = Show advanced options
+updates-advanced-hide = Hide advanced options
 updates-your-packages-blurb = Manage your user-level packages.
 updates-your-packages = Your packages
 updates-fetch-latest = Fetch latest catalog
 updates-update-my-packages = Update my packages
-updates-system-blurb = Apply your system configuration. Requires admin authentication.
+updates-system-blurb = Fetch the latest system packages and apply your system configuration. Requires admin authentication.
 updates-system = System
 updates-source-config = Source config: { $path }
 updates-source-config-unset = Source config: (not set — open Settings to choose)
 updates-fetch-system = Fetch system catalog
 updates-update-system = Update system
 # DO NOT TRANSLATE — literal shell command shown as a tooltip
-updates-update-system-tip = pkexec guix system reconfigure
+updates-update-system-tip = pkexec guix time-machine -- system reconfigure
 updates-confirm-reconfigure = Confirm system reconfigure
 updates-reconfigure-blurb = Running as root via pkexec. Verify the paths below — each will be loaded by Guile with root privileges.
 updates-config = Config:
@@ -172,7 +179,7 @@ updates-privileged-help-cmd-label = Run this manually in a terminal:
 # DO NOT TRANSLATE: literal shell command
 updates-privileged-help-cmd-pull = sudo guix pull
 # DO NOT TRANSLATE: literal shell command
-updates-privileged-help-cmd-reconfigure = sudo guix system reconfigure -L { $load } { $cfg }
+updates-privileged-help-cmd-reconfigure = sudo guix time-machine -- system reconfigure -L { $load } { $cfg }
 
 # -- about --
 about-title = About

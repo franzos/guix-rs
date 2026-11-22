@@ -114,6 +114,13 @@ installed-error = 错误：{ $error }
 
 # -- updates --
 updates-title = 更新
+updates-all-title = 全部更新
+updates-all-blurb = 一次获取最新应用、已安装软件包的更新和系统更新。
+updates-all-blurb-never = 你现在看到的是安装程序自带的应用。更新即可获得最新版本和安全修复。
+updates-all-no-system = 在设置中指定系统配置之前，将跳过系统更新。
+updates-all-button = 全部更新
+updates-advanced-show = 显示高级选项
+updates-advanced-hide = 隐藏高级选项
 updates-your-packages-blurb = 管理你的用户级软件包。
 updates-your-packages = 你的软件包
 updates-fetch-latest = 获取最新目录
@@ -125,7 +132,7 @@ updates-source-config-unset = 源配置：（未设置——打开“设置”�
 updates-fetch-system = 获取系统目录
 updates-update-system = 更新系统
 # DO NOT TRANSLATE — literal shell command shown as a tooltip
-updates-update-system-tip = pkexec guix system reconfigure
+updates-update-system-tip = pkexec guix time-machine -- system reconfigure
 updates-confirm-reconfigure = 确认系统重新配置
 updates-reconfigure-blurb = 通过 pkexec 以 root 身份运行。请核对下面的路径——每个路径都将由 Guile 以 root 权限加载。
 updates-config = 配置：
@@ -153,7 +160,7 @@ updates-privileged-help-cmd-label = 在终端中手动运行：
 # DO NOT TRANSLATE: literal shell command
 updates-privileged-help-cmd-pull = sudo guix pull
 # DO NOT TRANSLATE: literal shell command
-updates-privileged-help-cmd-reconfigure = sudo guix system reconfigure -L { $load } { $cfg }
+updates-privileged-help-cmd-reconfigure = sudo guix time-machine -- system reconfigure -L { $load } { $cfg }
 
 # -- about --
 about-title = 关于

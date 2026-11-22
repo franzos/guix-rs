@@ -92,7 +92,7 @@ async fn err_with_tail(msg: String, ring: &Arc<Mutex<StderrRing>>) -> GuixError 
 
 impl Repl {
     /// `timeout` is per-eval; a timeout doesn't kill the repl.
-    pub(crate) async fn spawn(binary: PathBuf, timeout: Duration) -> Result<Self, GuixError> {
+    pub(crate) fn spawn(binary: PathBuf, timeout: Duration) -> Result<Self, GuixError> {
         let mut child: Child = Command::new(&binary)
             .arg("repl")
             .arg("-t")

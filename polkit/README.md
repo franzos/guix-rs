@@ -1,6 +1,6 @@
-# Polkit policies — `org.libguix.system-{reconfigure,pull}`
+# Polkit policies — `org.libguix.system-{reconfigure,pull,upgrade}`
 
-This directory ships two polkit actions that let `libguix` invoke
+This directory ships three polkit actions that let `libguix` invoke
 privileged Guix operations via `pkexec` with an interactive admin prompt
 instead of asking the user to drop into a root shell.
 
@@ -17,24 +17,31 @@ instead of asking the user to drop into a root shell.
   `/run/current-system/profile/bin/guix pull …` (argv constrained to
   `argv1=pull`). Same `auth_admin_keep` semantics. This updates the
   **root** catalog at
-  `/var/guix/profiles/per-user/root/current-guix`, which is what
-  `guix system reconfigure` resolves packages against. `reconfigure`
-  itself does not auto-pull — see the lib's `SystemOps::pull` docs.
+  `/var/guix/profiles/per-user/root/current-guix`, used by `guix` in a
+  root shell.
+- `org.libguix.system-upgrade.policy` — action
+  `org.libguix.system-upgrade`. Permits
+  `/run/current-system/profile/bin/guix time-machine …` (argv
+  constrained to `argv1=time-machine`). libguix uses it for
+  `time-machine -- system reconfigure …`, which fetches the latest
+  channels and reconfigures with them. A plain `system reconfigure`
+  through pkexec runs the system guix and only knows the package
+  versions it was built with.
 
-Both actions target the *system* guix at
+All actions target the *system* guix at
 `/run/current-system/profile/bin/guix`, not the per-user
 `~/.config/guix/current/bin/guix` — pkexec refuses to exec binaries
 outside trusted paths.
 
 The argv constraints scope each action narrowly: without them polkit
 would match either action for *any* invocation of the trusted guix
-binary. With them, `system reconfigure` and `pull` get separate grant
-decisions.
+binary. With them, `system reconfigure`, `pull` and `time-machine` get
+separate grant decisions.
 
 ## Install — Guix System (recommended)
 
 `/etc/polkit-1/` on Guix System is declared in the system config, not
-mutable at runtime. Ship both policies as a tiny Guix package and extend
+mutable at runtime. Ship the policies as a tiny Guix package and extend
 `polkit-service-type` with it. A reference package definition lives in
 the [panther channel](https://codeberg.org/gofranz/panther) at
 `px/packages/libguix.scm` as `libguix-polkit`; lift it into any channel.

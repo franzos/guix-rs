@@ -126,6 +126,13 @@ installed-error = Erro: { $error }
 
 # -- updates --
 updates-title = Atualizações
+updates-all-title = Atualizar tudo
+updates-all-blurb = Obtenha os aplicativos mais recentes, atualizações dos seus pacotes instalados e do sistema de uma só vez.
+updates-all-blurb-never = Você está vendo os aplicativos que vieram com o instalador. Atualize para obter as versões mais recentes e correções de segurança.
+updates-all-no-system = As atualizações do sistema são ignoradas até que uma configuração do sistema seja definida nas Configurações.
+updates-all-button = Atualizar tudo
+updates-advanced-show = Mostrar opções avançadas
+updates-advanced-hide = Ocultar opções avançadas
 updates-your-packages-blurb = Gerencie seus pacotes de nível de usuário.
 updates-your-packages = Seus pacotes
 updates-fetch-latest = Buscar o catálogo mais recente
@@ -137,7 +144,7 @@ updates-source-config-unset = Configuração de origem: (não definida — abra 
 updates-fetch-system = Buscar o catálogo do sistema
 updates-update-system = Atualizar o sistema
 # DO NOT TRANSLATE — literal shell command shown as a tooltip
-updates-update-system-tip = pkexec guix system reconfigure
+updates-update-system-tip = pkexec guix time-machine -- system reconfigure
 updates-confirm-reconfigure = Confirmar a reconfiguração do sistema
 updates-reconfigure-blurb = Executando como root via pkexec. Verifique os caminhos abaixo — cada um será carregado pelo Guile com privilégios de root.
 updates-config = Configuração:
@@ -168,7 +175,7 @@ updates-privileged-help-cmd-label = Execute isto manualmente em um terminal:
 # DO NOT TRANSLATE: literal shell command
 updates-privileged-help-cmd-pull = sudo guix pull
 # DO NOT TRANSLATE: literal shell command
-updates-privileged-help-cmd-reconfigure = sudo guix system reconfigure -L { $load } { $cfg }
+updates-privileged-help-cmd-reconfigure = sudo guix time-machine -- system reconfigure -L { $load } { $cfg }
 
 # -- about --
 about-title = Sobre

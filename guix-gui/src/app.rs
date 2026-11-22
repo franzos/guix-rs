@@ -46,6 +46,8 @@ pub struct App {
     pub discovery_error: Option<String>,
     pub active_tab: Tab,
     pub active_op: Option<ActiveOp>,
+    /// Steps still to run after the active op of an "Update everything" run.
+    pub update_queue: Vec<OpKind>,
     pub terminal: TerminalBuffer,
     pub show_log: bool,
     pub debug_events: bool,
@@ -138,6 +140,7 @@ pub struct UpdatesState {
     pub loading_channels: bool,
     pub error: Option<String>,
     pub mtimes: PullMtimes,
+    pub show_advanced: bool,
     /// Prominent help card for privileged ops (system pull / reconfigure):
     /// shown when no polkit agent is detected or when the op fails to start.
     pub privileged_help: Option<PrivilegedHelp>,
@@ -159,6 +162,8 @@ pub enum PrivilegedHelpReason {
 /// Refreshed alongside the channel list — never `stat(2)` from `view()`.
 #[derive(Default, Debug, Clone)]
 pub struct PullMtimes {
+    /// False until the first stat round returns, so "never" isn't shown early.
+    pub loaded: bool,
     pub user_pull: Option<std::time::SystemTime>,
     pub root_pull: Option<std::time::SystemTime>,
     pub system_profile: Option<std::time::SystemTime>,
@@ -211,6 +216,8 @@ pub enum Message {
 
     ChannelsLoaded(Result<Vec<Channel>, String>),
     PullMtimesLoaded(PullMtimes),
+    UpdateAllClicked,
+    ToggleAdvancedUpdates,
     FetchUserCatalogClicked,
     FetchSystemCatalogClicked,
     UpgradeClicked,
@@ -368,6 +375,7 @@ impl App {
             discovery_error: None,
             active_tab,
             active_op: None,
+            update_queue: Vec::new(),
             terminal: TerminalBuffer::default(),
             show_log,
             debug_events,
@@ -641,6 +649,20 @@ impl App {
                 self.updates.mtimes = m;
                 Task::none()
             }
+            Message::UpdateAllClicked => {
+                if self.active_op.is_some() {
+                    return Task::none();
+                }
+                self.update_queue = vec![OpKind::Upgrade];
+                if self.settings.source_config_path.is_some() {
+                    self.update_queue.push(OpKind::Reconfigure);
+                }
+                self.start_op(OpKind::Pull, |g| g.pull().user())
+            }
+            Message::ToggleAdvancedUpdates => {
+                self.updates.show_advanced = !self.updates.show_advanced;
+                Task::none()
+            }
             Message::FetchUserCatalogClicked => self.start_op(OpKind::Pull, |g| g.pull().user()),
             Message::FetchSystemCatalogClicked => {
                 if !libguix::auth_agent_present() {
@@ -676,25 +698,7 @@ impl App {
                 let Some(pending) = self.system.pending_reconfigure.take() else {
                     return Task::none();
                 };
-                let PendingReconfigure {
-                    config_path,
-                    load_paths,
-                } = pending;
-                if !libguix::auth_agent_present() {
-                    self.updates.privileged_help = Some(PrivilegedHelp {
-                        kind: OpKind::Reconfigure,
-                        reason: PrivilegedHelpReason::NoAgentWarning,
-                    });
-                }
-                self.start_op(OpKind::Reconfigure, move |g| {
-                    g.system().reconfigure(
-                        &config_path,
-                        ReconfigureOptions {
-                            load_paths,
-                            ..Default::default()
-                        },
-                    )
-                })
+                self.start_reconfigure(pending.config_path, pending.load_paths)
             }
 
             Message::SystemConfigChecked(Ok(p)) => {
@@ -1502,12 +1506,15 @@ impl App {
                     return Task::none();
                 }
 
-                if refresh_after_pull {
+                let refresh = if refresh_after_pull {
                     let mut tasks = vec![
                         self.spawn_channels_refresh(),
                         self.spawn_pull_mtimes_refresh(),
                     ];
                     if user_pull_succeeded {
+                        if let Some(g) = self.guix.as_mut() {
+                            g.rebind();
+                        }
                         tasks.push(self.spawn_repl_refresh());
                     }
                     Task::batch(tasks)
@@ -1518,7 +1525,22 @@ impl App {
                     ])
                 } else {
                     Task::none()
+                };
+
+                let succeeded = matches!(
+                    self.active_op.as_ref(),
+                    Some(op) if op.final_code == Some(0)
+                );
+                if !succeeded {
+                    self.update_queue.clear();
+                    return refresh;
                 }
+                if self.update_queue.is_empty() {
+                    return refresh;
+                }
+                let next = self.update_queue.remove(0);
+                self.active_op = None;
+                Task::batch([refresh, self.start_update_step(next)])
             }
             Message::CancelClicked => {
                 if let Some(op) = self.active_op.as_mut() {
@@ -1542,10 +1564,47 @@ impl App {
                 Task::none()
             }
             Message::DismissOverlay => {
+                self.update_queue.clear();
                 self.active_op = None;
                 self.terminal.clear();
                 Task::none()
             }
+        }
+    }
+
+    fn start_reconfigure(
+        &mut self,
+        config_path: PathBuf,
+        load_paths: Vec<PathBuf>,
+    ) -> Task<Message> {
+        if !libguix::auth_agent_present() {
+            self.updates.privileged_help = Some(PrivilegedHelp {
+                kind: OpKind::Reconfigure,
+                reason: PrivilegedHelpReason::NoAgentWarning,
+            });
+        }
+        self.start_op(OpKind::Reconfigure, move |g| {
+            g.system().reconfigure_latest(
+                &config_path,
+                ReconfigureOptions {
+                    load_paths,
+                    ..Default::default()
+                },
+            )
+        })
+    }
+
+    fn start_update_step(&mut self, kind: OpKind) -> Task<Message> {
+        match kind {
+            OpKind::Upgrade => self.start_op(OpKind::Upgrade, |g| g.package().upgrade(None)),
+            OpKind::Reconfigure => match self.settings.source_config_path.clone() {
+                Some(path) => {
+                    let load_paths = self.settings.effective_load_paths();
+                    self.start_reconfigure(path, load_paths)
+                }
+                None => Task::none(),
+            },
+            _ => Task::none(),
         }
     }
 
@@ -1619,6 +1678,7 @@ impl App {
                     stat(libguix::Guix::system_profile_path()),
                 );
                 PullMtimes {
+                    loaded: true,
                     user_pull,
                     root_pull,
                     system_profile,

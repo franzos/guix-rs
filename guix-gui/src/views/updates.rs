@@ -1,5 +1,5 @@
-//! Two-scope Updates tab — each scope has its own fetch + apply pair
-//! because reconfigure never auto-pulls. See NOTES.md "The two catalogs".
+//! Updates tab — one "Update everything" action, with the per-scope
+//! fetch + apply pairs behind Advanced. See NOTES.md "The two catalogs".
 
 use std::path::Path;
 
@@ -21,8 +21,12 @@ pub fn view(app: &App) -> Element<'_, Message> {
     if let Some(help) = app.updates.privileged_help.as_ref() {
         sections = sections.push(privileged_help_card(app, help));
     }
-    sections = sections.push(user_packages_section(app, busy));
-    sections = sections.push(system_section(app, source, busy));
+    sections = sections.push(update_all_section(app, busy));
+    sections = sections.push(advanced_toggle(app));
+    if app.updates.show_advanced {
+        sections = sections.push(user_packages_section(app, busy));
+        sections = sections.push(system_section(app, source, busy));
+    }
 
     column![header, sections]
         .spacing(8)
@@ -89,6 +93,54 @@ fn privileged_help_card<'a>(app: &'a App, help: &'a PrivilegedHelp) -> Element<'
         .padding(16)
         .width(Length::Fill)
         .style(styles::card)
+        .into()
+}
+
+/// True once we know the user has never fetched a catalog of their own.
+pub fn never_updated(app: &App) -> bool {
+    app.updates.mtimes.loaded && app.updates.mtimes.user_pull.is_none()
+}
+
+pub fn update_all_button<'a>(busy: bool) -> Element<'a, Message> {
+    button(text(crate::t!("updates-all-button")).size(13))
+        .padding([8, 16])
+        .style(styles::btn_primary)
+        .on_press_maybe(if busy {
+            None
+        } else {
+            Some(Message::UpdateAllClicked)
+        })
+        .into()
+}
+
+fn update_all_section<'a>(app: &'a App, busy: bool) -> Element<'a, Message> {
+    let blurb = if never_updated(app) {
+        crate::t!("updates-all-blurb-never")
+    } else {
+        crate::t!("updates-all-blurb")
+    };
+    let mut body: Column<'a, Message> = column![text(blurb).size(13).color(MUTED)].spacing(10);
+    if app.settings.source_config_path.is_none() {
+        body = body.push(
+            text(crate::t!("updates-all-no-system"))
+                .size(12)
+                .color(MUTED),
+        );
+    }
+    body = body.push(update_all_button(busy));
+    section_card(crate::t!("updates-all-title"), body.into())
+}
+
+fn advanced_toggle<'a>(app: &'a App) -> Element<'a, Message> {
+    let label = if app.updates.show_advanced {
+        crate::t!("updates-advanced-hide")
+    } else {
+        crate::t!("updates-advanced-show")
+    };
+    button(text(label).size(12))
+        .padding([6, 12])
+        .style(styles::btn_ghost)
+        .on_press(Message::ToggleAdvancedUpdates)
         .into()
 }
 
