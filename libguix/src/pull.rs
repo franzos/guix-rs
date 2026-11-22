@@ -85,7 +85,7 @@ mod tests {
         let o = SystemPullOptions::default();
         assert!(!o.dry_run);
         assert_eq!(o.privilege, Privilege::Pkexec);
-        assert!(o.build.substitute_urls.is_empty());
+        assert_eq!(o.build.substitute_urls, Vec::<String>::new());
     }
 
     #[test]

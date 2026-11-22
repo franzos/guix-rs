@@ -136,7 +136,7 @@ mod tests {
         let mut f = Framer::new();
         let mut out = Vec::new();
         f.feed("(foo ", &mut out);
-        assert!(out.is_empty());
+        assert_eq!(out, Vec::<String>::new());
         f.feed("(bar)) ", &mut out);
         assert_eq!(out, vec!["(foo (bar))".to_string()]);
     }
@@ -200,7 +200,7 @@ mod tests {
         let mut f = Framer::new();
         let mut out = Vec::new();
         f.feed("(v \"a\\", &mut out);
-        assert!(out.is_empty());
+        assert_eq!(out, Vec::<String>::new());
         f.feed("\"b\")\n", &mut out);
         assert_eq!(out, vec!["(v \"a\\\"b\")".to_string()]);
     }

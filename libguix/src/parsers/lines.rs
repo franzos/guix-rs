@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn drops_empty_frames() {
-        assert!(split_all(b"\r\r\r").is_empty());
+        assert_eq!(split_all(b"\r\r\r"), Vec::<Frame>::new());
     }
 
     #[test]
@@ -204,8 +204,8 @@ mod tests {
 
     #[test]
     fn pure_chrome_ascii_bar_is_dropped() {
-        assert!(split_all(b"[####]\n").is_empty());
-        assert!(split_all(b"[####] \n").is_empty());
+        assert_eq!(split_all(b"[####]\n"), Vec::<Frame>::new());
+        assert_eq!(split_all(b"[####] \n"), Vec::<Frame>::new());
     }
 
     #[test]
@@ -227,7 +227,7 @@ mod tests {
         let mut s = Splitter::new();
         let mut out = Vec::new();
         s.feed(b"hel", &mut out);
-        assert!(out.is_empty());
+        assert_eq!(out, Vec::<Frame>::new());
         s.feed(b"lo\nworld", &mut out);
         assert_eq!(texts(&out), vec!["hello"]);
         s.flush_eof(&mut out);

@@ -11,6 +11,8 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -24,11 +26,26 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
+      # `cargo publish` leaves the uploaded archive in target/package; the
+      # SLSA generator signs provenance over this digest.
+      - name: Hash the published crate
+        id: hash
+        run: |
+          cp target/package/libguix-*.crate .
+          echo "hashes=$(sha256sum libguix-*.crate | base64 -w0)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: crate
+          path: libguix-*.crate
+          if-no-files-found: error
+          retention-days: 5
+
   release:
     needs: publish
     runs-on: ubuntu-latest
     permissions:
-      contents: write # create the GitHub release
+      contents: write # create the GitHub release and upload the crate
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -37,3 +54,26 @@ jobs:
           changelog: CHANGELOG.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: crate
+
+      - name: Attach the crate to the release
+        run: gh release upload "$GITHUB_REF_NAME" libguix-*.crate --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  provenance:
+    name: SLSA provenance
+    needs: [publish, release]
+    permissions:
+      actions: read # read the workflow path for the provenance
+      id-token: write # keyless (Sigstore) signing via OIDC
+      contents: write # attach the provenance to the release
+    # Pinned by tag, not SHA: slsa-verifier resolves the trusted builder by
+    # semver tag, so a SHA pin would break verification.
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: ${{ needs.publish.outputs.hashes }}
+      upload-assets: true

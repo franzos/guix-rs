@@ -710,6 +710,6 @@ mod tests {
         }
         let snap = r.snapshot();
         assert!(snap.len() <= STDERR_RING_BYTES);
-        assert!(!snap.is_empty());
+        assert_ne!(snap, "");
     }
 }

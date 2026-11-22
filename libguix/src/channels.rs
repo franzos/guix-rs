@@ -722,7 +722,7 @@ mod tests {
     fn seed_none_resolves_default_path() {
         let cf = ChannelsFile::seed(None).expect("seed");
         assert!(cf.path.ends_with(".config/guix/channels.scm"));
-        assert!(cf.list.channels().is_empty());
+        assert_eq!(cf.list.channels(), []);
     }
 
     #[test]
@@ -908,7 +908,7 @@ mod tests {
         };
         let cf = ChannelsFile::seed_with_baseline(Some(&p), &baseline).expect("seed");
         assert_eq!(cf.raw, "(cons* %default-channels)");
-        assert!(cf.list.channels().is_empty());
+        assert_eq!(cf.list.channels(), []);
     }
 
     #[test]

@@ -56,6 +56,8 @@ mod cmd;
 mod describe;
 mod discover;
 mod error;
+#[cfg(fuzzing)]
+pub mod fuzz_api;
 mod gc;
 mod installed;
 mod operation;

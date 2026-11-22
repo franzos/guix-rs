@@ -251,7 +251,7 @@ mod tests {
         let v = from_str(r#"(("orphan" "1.0" "" ()))"#).unwrap();
         let entries = parse_entries(v);
         assert_eq!(entries.len(), 1);
-        assert!(entries[0].channels.is_empty());
+        assert_eq!(entries[0].channels, Vec::<String>::new());
         let buckets = bucket_entries(entries);
         let unknown = buckets.get(UNKNOWN_BUCKET).expect("unknown bucket present");
         assert_eq!(unknown.len(), 1);

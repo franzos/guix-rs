@@ -389,7 +389,7 @@ mod tests {
             spine = lexpr::Value::Cons(lexpr::Cons::new(lexpr::Value::from(i as i64), spine));
         }
         let results = parse_records(spine);
-        assert!(results.is_empty());
+        assert_eq!(results, Vec::<PackageSummary>::new());
     }
 
     #[test]

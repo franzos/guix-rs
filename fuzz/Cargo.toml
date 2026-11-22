@@ -1,0 +1,47 @@
+[package]
+name = "libguix-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+libguix = { path = "../libguix", default-features = false }
+
+[[bin]]
+name = "channels"
+path = "fuzz_targets/channels.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lines"
+path = "fuzz_targets/lines.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "framer"
+path = "fuzz_targets/framer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "recutils"
+path = "fuzz_targets/recutils.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tsv"
+path = "fuzz_targets/tsv.rs"
+test = false
+doc = false
+bench = false

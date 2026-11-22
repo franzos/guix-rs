@@ -35,6 +35,10 @@ indexmap = "2"
 tempfile = "3"
 tracing = { version = "0.1", default-features = false, features = ["std"], optional = true }
 
+[lints.rust]
+# cargo-fuzz sets `--cfg fuzzing`; it gates `fuzz_api`.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util", "io-util", "sync", "time"] }
 tokio-test = "0.4"

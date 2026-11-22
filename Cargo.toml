@@ -4,6 +4,7 @@ members = [
     "libguix",
     "guix-gui",
 ]
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.1.19"

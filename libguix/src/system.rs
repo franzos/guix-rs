@@ -274,7 +274,7 @@ mod tests {
         let o = ReconfigureOptions::default();
         assert!(!o.dry_run);
         assert!(!o.allow_downgrades);
-        assert!(o.load_paths.is_empty());
+        assert_eq!(o.load_paths, Vec::<PathBuf>::new());
     }
 
     #[test]

@@ -97,7 +97,7 @@ mod tests {
     fn default_build_options_emit_nothing() {
         let mut args = Vec::new();
         BuildOptions::default().append_args(&mut args);
-        assert!(args.is_empty());
+        assert_eq!(args, Vec::<String>::new());
     }
 
     #[test]
