@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.19] - 2026-11-22
+
+### Added
+- "Update everything": apps, your packages and the system in one step
+- Hint to update when you've never fetched the latest apps
+
+### Changed
+- System updates fetch the latest packages before applying
+- Per-step update actions moved behind "Advanced"
+
+### Fixed
+- First update no longer needs an app restart to take effect
+
 ## [0.1.18] - 2026-07-04
 
 ### Fixed
