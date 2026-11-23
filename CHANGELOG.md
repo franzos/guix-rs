@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.20] - 2026-11-23
+
+### Added
+- Sandboxed apps: one search result with a "Sandboxed" switch
+- Plain-language list of what a sandboxed app can access
+- Switch an installed app between sandboxed and plain in one step
+
+### Changed
+- Removing an app removes the installed output, not only `out`
+
 ## [0.1.19] - 2026-11-22
 
 ### Added
