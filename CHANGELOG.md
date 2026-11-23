@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.21] - 2026-11-23
+
+### Fixed
+- Release pipeline: GitHub release and provenance were not published
+
 ## [0.1.20] - 2026-11-23
 
 ### Added

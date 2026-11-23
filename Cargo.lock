@@ -1592,7 +1592,7 @@ dependencies = [
 
 [[package]]
 name = "guix-gui"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "directories",
  "futures-util",
@@ -2463,7 +2463,7 @@ dependencies = [
 
 [[package]]
 name = "libguix"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "futures-core",
  "futures-util",
