@@ -136,27 +136,27 @@ mod tests {
         assert!(!p.audio && !p.camera && !p.user_namespaces);
         assert_eq!(p.dbus_rules.len(), 5);
         assert_eq!(p.dbus_rules[3], "--own=com.transmissionbt.Transmission");
-        assert!(p.unknown.is_empty());
+        assert_eq!(p.unknown, Vec::<(String, String)>::new());
     }
 
     #[test]
     fn accepts_explicit_dotted_forms() {
         let text = r#"((base . "mpv") (output . "out") (policy . ((read-only-paths . ()) (writable-paths . (".cache/mpv")) (dbus-rules . ()) (audio? . #t))))"#;
         let p = SandboxInfo::from_file_text(text).expect("parses").policy;
-        assert!(p.read_only_paths.is_empty());
+        assert_eq!(p.read_only_paths, Vec::<String>::new());
         assert_eq!(p.writable_paths, vec![".cache/mpv"]);
-        assert!(p.dbus_rules.is_empty());
+        assert_eq!(p.dbus_rules, Vec::<String>::new());
         assert!(p.audio);
-        assert!(p.unknown.is_empty());
+        assert_eq!(p.unknown, Vec::<(String, String)>::new());
     }
 
     #[test]
     fn empty_list_written_without_dot() {
         let text = r#"((base . "x") (output . "out") (policy (read-only-paths) (dbus-rules)))"#;
         let p = SandboxInfo::from_file_text(text).expect("parses").policy;
-        assert!(p.read_only_paths.is_empty());
-        assert!(p.dbus_rules.is_empty());
-        assert!(p.unknown.is_empty());
+        assert_eq!(p.read_only_paths, Vec::<String>::new());
+        assert_eq!(p.dbus_rules, Vec::<String>::new());
+        assert_eq!(p.unknown, Vec::<(String, String)>::new());
     }
 
     #[test]
