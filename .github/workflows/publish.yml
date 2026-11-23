@@ -14,32 +14,32 @@ jobs:
     outputs:
       hashes: ${{ steps.hash.outputs.hashes }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
 
       - name: Run tests
         run: cargo test -p libguix
 
-      - name: Publish libguix to crates.io
-        run: cargo publish -p libguix --locked
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-      # `cargo publish` leaves the uploaded archive in target/package; the
-      # SLSA generator signs provenance over this digest.
-      - name: Hash the published crate
+      # Before publishing: a later failure would leave a crate without a release.
+      - name: Package and hash the crate
         id: hash
         run: |
-          cp target/package/libguix-*.crate .
+          cargo package -p libguix --locked
+          cd target/package
           echo "hashes=$(sha256sum libguix-*.crate | base64 -w0)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: crate
-          path: libguix-*.crate
+          path: target/package/libguix-*.crate
           if-no-files-found: error
           retention-days: 5
+
+      - name: Publish libguix to crates.io
+        run: cargo publish -p libguix --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   release:
     needs: publish
@@ -47,7 +47,7 @@ jobs:
     permissions:
       contents: write # create the GitHub release and upload the crate
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - uses: taiki-e/create-gh-release-action@eba8ea96c86cca8a37f1b56e94b4d13301fba651 # v1.11.0
         with:
