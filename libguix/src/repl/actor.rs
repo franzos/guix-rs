@@ -297,13 +297,14 @@ impl Repl {
         self.eval_with_modules(&[], form).await
     }
 
-    /// Forces every `(gnu packages …)` submodule to load. ~10-15 s cold.
+    /// Forces every `(gnu packages …)` submodule to load and builds the
+    /// `find-packages-by-name` index used by search. ~10-15 s cold.
     /// See NOTES.md "Warmup must fully prime submodules".
     pub async fn warmup(&self) -> Result<(), GuixError> {
         let _ = self
             .eval_with_modules(
                 &["(gnu packages)", "(guix packages)"],
-                "(fold-packages (lambda (_ acc) acc) #t)",
+                "(begin (fold-packages (lambda (_ acc) acc) #t) (find-packages-by-name \"\") #t)",
             )
             .await?;
         Ok(())

@@ -198,6 +198,7 @@ fn bucket_entries(entries: Vec<InstalledEntry>) -> HashMap<String, Vec<Installed
             version: e.version,
             output: "out".into(),
             store_path: PathBuf::from(e.source_file),
+            sandbox: None,
         });
     }
     buckets

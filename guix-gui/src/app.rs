@@ -22,6 +22,7 @@ use crate::recommended::RECOMMENDED;
 use crate::settings::{probe_first_run_config, Settings, Tab};
 use crate::styles::{self, BG, PRIMARY, TEXT};
 use crate::terminal_buffer::TerminalBuffer;
+use crate::views::sandbox::{install_state, InstallState, SessionType};
 use crate::views::{about, channels as channels_view, home, installed, search, system, updates};
 use guix_gui::discovery::{DiscoveredChannel, DiscoveredPackage, Discovery, DiscoveryError};
 
@@ -75,6 +76,7 @@ pub struct App {
     /// so the heavyweight screenshot fetch isn't triggered just to
     /// populate tile thumbnails.
     pub home_icons: HashMap<String, IconCacheEntry>,
+    pub session: SessionType,
 }
 
 #[derive(Debug, Clone)]
@@ -119,6 +121,25 @@ pub struct SearchState {
     /// regardless of whether the match is found — a stray name from a
     /// stale Home click shouldn't latch onto an unrelated future query.
     pub pending_select: Option<String>,
+    /// Switch position for a selected row that is not installed.
+    pub sandboxed: bool,
+    pub pending_swap: Option<PendingSwap>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingSwap {
+    pub base: String,
+    pub to_sandboxed: bool,
+    pub remove: String,
+    pub install: String,
+}
+
+impl SearchState {
+    fn select(&mut self, selected: Option<usize>) {
+        self.selected = selected;
+        self.sandboxed = false;
+        self.pending_swap = None;
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -209,6 +230,9 @@ pub enum Message {
     },
     SearchResultSelected(usize),
     SearchErrorCopy,
+    SandboxToggled(bool),
+    SwapConfirmed,
+    SwapCancelled,
 
     InstalledRefresh,
     InstalledLoaded(Result<Vec<InstalledPackage>, String>),
@@ -401,6 +425,7 @@ impl App {
             metadata_cache: HashMap::new(),
             lightbox: None,
             home_icons: HashMap::new(),
+            session: SessionType::from_env_value(std::env::var("XDG_SESSION_TYPE").ok().as_deref()),
         };
         let boot = Task::perform(
             async {
@@ -588,13 +613,13 @@ impl App {
                             self.search.results = res.results;
                             self.search.truncated = res.truncated;
                             self.search.last_limit = res.limit;
-                            self.search.selected = None;
+                            self.search.select(None);
                             self.search.error = None;
                             if let Some(name) = self.search.pending_select.take() {
                                 if let Some(i) =
                                     self.search.results.iter().position(|p| p.name == name)
                                 {
-                                    self.search.selected = Some(i);
+                                    self.search.select(Some(i));
                                     return self.spawn_app_metadata_fetch(i);
                                 }
                             }
@@ -607,8 +632,27 @@ impl App {
                 Task::none()
             }
             Message::SearchResultSelected(i) => {
-                self.search.selected = Some(i);
+                self.search.select(Some(i));
                 self.spawn_app_metadata_fetch(i)
+            }
+            Message::SandboxToggled(on) => {
+                self.sandbox_toggled(on);
+                Task::none()
+            }
+            Message::SwapCancelled => {
+                self.search.pending_swap = None;
+                Task::none()
+            }
+            Message::SwapConfirmed => {
+                if self.active_op.is_some() {
+                    return Task::none();
+                }
+                let Some(swap) = self.search.pending_swap.take() else {
+                    return Task::none();
+                };
+                self.start_op(OpKind::Swap, move |g| {
+                    g.package().swap(&swap.remove, &swap.install)
+                })
             }
             Message::SearchErrorCopy => {
                 if let Some(err) = self.search.error.as_ref() {
@@ -623,6 +667,8 @@ impl App {
                 self.installed.refreshing = false;
                 self.installed.packages = ps;
                 self.installed.error = None;
+                // Its remove spec came from the previous list.
+                self.search.pending_swap = None;
                 Task::none()
             }
             Message::InstalledLoaded(Err(e)) => {
@@ -1401,12 +1447,10 @@ impl App {
                     self.active_op.as_ref(),
                     Some(op) if op.kind == OpKind::Pull && op.final_code == Some(0)
                 );
-                let refresh_after_profile_change = matches!(
-                    self.active_op.as_ref(),
-                    Some(op)
-                        if matches!(op.kind, OpKind::Install | OpKind::Remove | OpKind::Upgrade)
-                            && op.final_code == Some(0)
-                );
+                let refresh_after_profile_change = self
+                    .active_op
+                    .as_ref()
+                    .is_some_and(|op| refreshes_installed(op.kind, op.final_code));
                 // Keep the Updates-tab privileged-help card in sync with the
                 // outcome of a system pull / reconfigure. The agent check is
                 // advisory now, so a no-agent op still runs and fails at
@@ -1445,11 +1489,11 @@ impl App {
                 // completion (success or failure) of these kinds
                 // because a partial run can still leave the profile
                 // changed; the next dialog open re-fetches.
-                if matches!(
-                    self.active_op.as_ref(),
-                    Some(op)
-                        if matches!(op.kind, OpKind::Install | OpKind::Remove | OpKind::Upgrade)
-                ) {
+                if self
+                    .active_op
+                    .as_ref()
+                    .is_some_and(|op| op.kind.changes_profile())
+                {
                     self.channels.installed_by_channel = None;
                 }
                 // Channels-tab continuation: did the pull we just
@@ -1971,6 +2015,41 @@ impl App {
         )
     }
 
+    fn sandbox_toggled(&mut self, on: bool) {
+        let Some(p) = self
+            .search
+            .selected
+            .and_then(|i| self.search.results.get(i))
+        else {
+            return;
+        };
+        let Some(variant) = p.sandbox.as_ref() else {
+            return;
+        };
+        match install_state(&self.installed.packages, &p.name) {
+            InstallState::NotInstalled => self.search.sandboxed = on,
+            InstallState::Plain(ip) if on => {
+                self.search.pending_swap = Some(PendingSwap {
+                    base: p.name.clone(),
+                    to_sandboxed: true,
+                    remove: ip.spec(),
+                    install: variant.name.clone(),
+                });
+            }
+            InstallState::Sandboxed(ip) if !on => {
+                if let Some(info) = ip.sandbox.as_ref() {
+                    self.search.pending_swap = Some(PendingSwap {
+                        base: p.name.clone(),
+                        to_sandboxed: false,
+                        remove: ip.spec(),
+                        install: format!("{}:{}", info.base, info.output),
+                    });
+                }
+            }
+            InstallState::Plain(_) | InstallState::Sandboxed(_) => {}
+        }
+    }
+
     fn start_op<F>(&mut self, kind: OpKind, build: F) -> Task<Message>
     where
         F: FnOnce(&Guix) -> Result<Operation, GuixError> + Send + 'static,
@@ -2318,6 +2397,11 @@ pub(crate) fn op_supports_cancel(kind: OpKind) -> bool {
     !matches!(kind, OpKind::SystemPull | OpKind::Reconfigure)
 }
 
+// A swap from a stale list fails "not found in profile" until the list is refreshed.
+fn refreshes_installed(kind: OpKind, final_code: Option<i32>) -> bool {
+    kind.changes_profile() && (final_code == Some(0) || kind == OpKind::Swap)
+}
+
 /// Returns `true` when the Channels tab should expand the row's
 /// confirmation into the warning dialog (channel name + affected
 /// package list + "Remove channel anyway" / Cancel). The dialog
@@ -2382,10 +2466,43 @@ mod tests {
             OpKind::Install,
             OpKind::Remove,
             OpKind::Upgrade,
+            OpKind::Swap,
             OpKind::Pull,
         ] {
             assert!(op_supports_cancel(k), "{k:?} must support cancel");
         }
+    }
+
+    #[test]
+    fn failed_swap_refreshes_installed() {
+        assert!(refreshes_installed(OpKind::Swap, Some(1)));
+        assert!(refreshes_installed(OpKind::Swap, None));
+        assert!(refreshes_installed(OpKind::Swap, Some(0)));
+        for k in [OpKind::Install, OpKind::Remove, OpKind::Upgrade] {
+            assert!(refreshes_installed(k, Some(0)), "{k:?}");
+            assert!(!refreshes_installed(k, Some(1)), "{k:?}");
+        }
+        assert!(!refreshes_installed(OpKind::Pull, Some(0)));
+    }
+
+    #[test]
+    fn swap_finished_invalidates_installed_by_channel_cache() {
+        let (mut app, _) = App::new();
+        app.channels.installed_by_channel = Some(HashMap::new());
+        app.active_op = Some(ActiveOp {
+            id: OpId(1),
+            kind: OpKind::Swap,
+            cancel: None,
+            op_slot: SharedOp::new_empty_for_tests(),
+            final_code: Some(1),
+            finished: false,
+            cancelling: false,
+            bootstrap_likely: false,
+            progress: ProgressSummary::new(),
+            channel_shadow_seen: false,
+        });
+        let _ = app.update(Message::Progress(OpEvent::Finished));
+        assert!(app.channels.installed_by_channel.is_none());
     }
 
     #[test]
@@ -2794,6 +2911,7 @@ mod tests {
             version: "1.0".into(),
             output: "out".into(),
             store_path: PathBuf::from("/gnu/store/x"),
+            sandbox: None,
         }
     }
 
@@ -2938,5 +3056,126 @@ mod tests {
         });
         let _ = app.update(Message::ChannelsRollbackDismissed);
         assert!(app.channels.rollback_offer.is_none());
+    }
+
+    fn sandbox_app(installed: Vec<InstalledPackage>) -> App {
+        use crate::views::search::tests::summary;
+        let (mut app, _) = App::new();
+        app.search.results = vec![summary(
+            "transmission",
+            Some("transmission-sandboxed"),
+            "gui",
+        )];
+        app.search.selected = Some(0);
+        app.installed.packages = installed;
+        app
+    }
+
+    fn swap(to_sandboxed: bool, remove: &str, install: &str) -> Option<PendingSwap> {
+        Some(PendingSwap {
+            base: "transmission".to_owned(),
+            to_sandboxed,
+            remove: remove.to_owned(),
+            install: install.to_owned(),
+        })
+    }
+
+    #[test]
+    fn sandbox_toggle_not_installed_sets_switch() {
+        let mut app = sandbox_app(Vec::new());
+        let _ = app.update(Message::SandboxToggled(true));
+        assert!(app.search.sandboxed);
+        assert!(app.search.pending_swap.is_none());
+        let _ = app.update(Message::SandboxToggled(false));
+        assert!(!app.search.sandboxed);
+    }
+
+    #[test]
+    fn sandbox_toggle_plain_installed_opens_swap_to_sandboxed() {
+        use crate::views::search::tests::installed;
+        let mut app = sandbox_app(vec![installed("transmission", "gui", None)]);
+        let _ = app.update(Message::SandboxToggled(false));
+        assert!(app.search.pending_swap.is_none());
+        let _ = app.update(Message::SandboxToggled(true));
+        assert_eq!(
+            app.search.pending_swap,
+            swap(true, "transmission:gui", "transmission-sandboxed")
+        );
+        assert!(!app.search.sandboxed);
+    }
+
+    #[test]
+    fn sandbox_toggle_sandboxed_installed_opens_swap_to_plain() {
+        use crate::views::search::tests::installed;
+        let mut app = sandbox_app(vec![installed(
+            "transmission-sandboxed",
+            "out",
+            Some(("transmission", "gui")),
+        )]);
+        let _ = app.update(Message::SandboxToggled(true));
+        assert!(app.search.pending_swap.is_none());
+        let _ = app.update(Message::SandboxToggled(false));
+        assert_eq!(
+            app.search.pending_swap,
+            swap(false, "transmission-sandboxed:out", "transmission:gui")
+        );
+        let _ = app.update(Message::SwapCancelled);
+        assert!(app.search.pending_swap.is_none());
+    }
+
+    #[test]
+    fn swap_confirmed_while_busy_keeps_card() {
+        let mut app = sandbox_app(Vec::new());
+        app.search.pending_swap = swap(true, "transmission:gui", "transmission-sandboxed");
+        app.active_op = Some(ActiveOp {
+            id: OpId(1),
+            kind: OpKind::Install,
+            cancel: None,
+            op_slot: SharedOp::new_empty_for_tests(),
+            final_code: None,
+            finished: false,
+            cancelling: false,
+            bootstrap_likely: false,
+            progress: ProgressSummary::new(),
+            channel_shadow_seen: false,
+        });
+        let _ = app.update(Message::SwapConfirmed);
+        assert!(app.search.pending_swap.is_some());
+        app.active_op = None;
+        let _ = app.update(Message::SwapConfirmed);
+        assert!(app.search.pending_swap.is_none());
+    }
+
+    #[test]
+    fn installed_reload_drops_pending_swap() {
+        let mut app = sandbox_app(Vec::new());
+        app.search.pending_swap = swap(false, "transmission-sandboxed:out", "transmission:gui");
+        let _ = app.update(Message::InstalledLoaded(Ok(Vec::new())));
+        assert!(app.search.pending_swap.is_none());
+    }
+
+    #[test]
+    fn selection_change_clears_sandbox_state() {
+        let mut app = sandbox_app(Vec::new());
+        app.search.sandboxed = true;
+        app.search.pending_swap = swap(true, "transmission:gui", "transmission-sandboxed");
+        let _ = app.update(Message::SearchResultSelected(0));
+        assert!(!app.search.sandboxed);
+        assert!(app.search.pending_swap.is_none());
+
+        app.search.sandboxed = true;
+        app.search.pending_swap = swap(true, "transmission:gui", "transmission-sandboxed");
+        let seq = app.search.query_seq;
+        let _ = app.update(Message::SearchCompleted {
+            seq,
+            result: Ok(Carrier::new(SearchFastResult {
+                results: Vec::new(),
+                truncated: false,
+                limit: 10,
+            })),
+        });
+        assert_eq!(app.search.selected, None);
+        assert!(!app.search.sandboxed);
+        assert!(app.search.pending_swap.is_none());
     }
 }

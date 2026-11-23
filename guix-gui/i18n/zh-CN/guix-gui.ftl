@@ -57,6 +57,7 @@ op-upgrade = 正在升级用户软件包
 op-pull = 正在获取用户目录
 op-system-pull = 正在获取系统目录
 op-reconfigure = 正在重新配置系统
+op-swap = 正在切换沙盒模式
 
 # -- stages --
 stage-starting = 启动中
@@ -356,3 +357,31 @@ channels-form-url-required = URL 为必填项。
 channels-form-intro-required = 引入提交和指纹为必填项。
 channels-vanished-after-write = channels.scm 在写入后消失——请刷新标签页。
 channels-reverted-to-baseline = 已移除你的最后一个频道。你的系统频道重新生效。
+
+# -- sandboxed variants --
+sandbox-label = 沙盒
+sandbox-permissions-title = 沙盒允许的内容
+sandbox-perm-none = 除自身文件外没有其他权限
+sandbox-perm-network = 网络访问
+sandbox-perm-audio = 音频：播放和麦克风
+sandbox-perm-camera = 摄像头
+sandbox-perm-gpu = 图形加速（GPU）
+sandbox-perm-user-namespaces = 用户命名空间（应用会构建自己的内部沙盒）
+sandbox-perm-file-args = 通过命令行传入的文件（只读）
+sandbox-perm-read-folders = 可读取
+sandbox-perm-write-folders = 可读写
+sandbox-perm-display-wayland = 显示：Wayland
+sandbox-perm-display-x11 = 显示：X11（应用可以读取其他窗口的输入和屏幕内容）
+sandbox-perm-display-none = 无显示访问权限
+sandbox-dbus-notifications = 桌面通知
+sandbox-dbus-keyring = 密码密钥环
+sandbox-dbus-tray = 托盘图标
+sandbox-dbus-screencast = 屏幕捕获（由你选择共享的内容）
+sandbox-dbus-settings = 主题和配色方案设置
+sandbox-dbus-open = 在其他应用中打开文件
+sandbox-dbus-other = 其他 D-Bus 规则
+sandbox-unknown-fields = 其他策略字段
+sandbox-swap-title = 切换 { $name } 的沙盒模式
+sandbox-swap-to-sandboxed-blurb = 应用需要重新启动。在沙盒中，它只能看到下面列出的文件夹；其他位置的文件对它不可见。
+sandbox-swap-to-plain-blurb = 应用需要重新启动。不使用沙盒时，它可以访问你的用户账户能访问的所有内容。
+sandbox-swap-confirm = 确认切换

@@ -592,6 +592,22 @@ mod tests {
     }
 
     #[test]
+    fn build_package_payload_swap_shape() {
+        let argv = crate::package::swap_argv("transmission:gui", "transmission-sandboxed");
+        let p = build_package_payload(None, &argv).expect("ok");
+        let idx: Vec<usize> = [
+            "\"-r\"",
+            "\"transmission:gui\"",
+            "\"-i\"",
+            "\"transmission-sandboxed\"",
+        ]
+        .iter()
+        .map(|arg| p.find(arg).expect("argument in payload"))
+        .collect();
+        assert!(idx.windows(2).all(|w| w[0] < w[1]), "{idx:?}");
+    }
+
+    #[test]
     fn build_package_payload_rejects_bad_arg() {
         assert!(build_package_payload(None, &["-i", "foo\nbar"]).is_err());
     }

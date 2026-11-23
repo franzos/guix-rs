@@ -1,8 +1,10 @@
 use iced::widget::{button, column, container, row, scrollable, text, Column, Space};
 use iced::{Element, Length};
+use libguix::InstalledPackage;
 
 use crate::app::{App, Message};
 use crate::styles::{self, BOLD, MUTED};
+use crate::views::sandbox::permissions_block;
 
 const SECONDARY_LINE_CHAR_LIMIT: usize = 90;
 
@@ -43,16 +45,27 @@ pub fn view(app: &App) -> Element<'_, Message> {
         let path_display = truncate_path_left(&store_path, budget.max(8));
         let secondary = format!("{prefix}{path_display}");
 
-        let info = column![
-            text(p.name.clone()).font(BOLD).size(14),
-            text(secondary).size(11).color(MUTED),
-        ]
-        .spacing(2);
+        let mut title = row![text(installed_title(p).to_owned()).font(BOLD).size(14)]
+            .spacing(8)
+            .align_y(iced::Alignment::Center);
+        if p.sandbox.is_some() {
+            title = title.push(
+                text(crate::t!("sandbox-label"))
+                    .size(10)
+                    .color(styles::SUCCESS),
+            );
+        }
+        let mut info = column![title, text(secondary).size(11).color(MUTED)].spacing(2);
+        if let Some(sandbox) = p.sandbox.as_ref() {
+            info = info
+                .push(Space::new().height(Length::Fixed(6.0)))
+                .push(permissions_block(sandbox, app.session));
+        }
 
         let remove_btn = button(text(crate::t!("common-remove")).size(12))
             .padding([6, 14])
             .style(styles::btn_danger)
-            .on_press(Message::RemoveRequested(p.name.clone()));
+            .on_press(Message::RemoveRequested(p.spec()));
 
         let card = container(
             row![info, Space::new().width(Length::Fill), remove_btn]
@@ -73,6 +86,10 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .into()
 }
 
+fn installed_title(p: &InstalledPackage) -> &str {
+    p.sandbox.as_ref().map_or(&p.name, |s| &s.base)
+}
+
 /// Left-truncate so the package name tail survives.
 fn truncate_path_left(s: &str, n: usize) -> String {
     let count = s.chars().count();
@@ -88,6 +105,24 @@ fn truncate_path_left(s: &str, n: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sandboxed_entry_is_titled_by_base() {
+        let mut p = InstalledPackage {
+            name: "transmission-sandboxed".into(),
+            version: "4.1.4".into(),
+            output: "out".into(),
+            store_path: "/gnu/store/x".into(),
+            sandbox: None,
+        };
+        assert_eq!(installed_title(&p), "transmission-sandboxed");
+        p.sandbox = Some(libguix::SandboxInfo {
+            base: "transmission".into(),
+            output: "gui".into(),
+            policy: libguix::SandboxPolicy::default(),
+        });
+        assert_eq!(installed_title(&p), "transmission");
+    }
 
     #[test]
     fn truncate_path_left_short_passthrough() {

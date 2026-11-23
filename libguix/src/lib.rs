@@ -70,6 +70,7 @@ pub mod progress;
 mod pull;
 mod repl;
 mod retry;
+mod sandbox;
 mod shell;
 mod system;
 mod system_channels;
@@ -94,6 +95,7 @@ pub use parsers::sexp::{parse_channels_list, ChannelsList};
 pub use pull::{PullOps, SystemPullOptions};
 pub use repl::Repl;
 pub use retry::{run_with_retry, RetryPolicy};
+pub use sandbox::{SandboxInfo, SandboxPolicy, SandboxVariant};
 pub use shell::{ShellBuilder, ShellOps};
 pub use system::{
     auth_agent_present, InitOptions, ReconfigureOptions, SystemOps, CURRENT_SYSTEM_CONFIG,

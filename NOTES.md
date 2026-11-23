@@ -65,7 +65,7 @@ All three are needed. Removing any one re-opens the "broken pipe + Guile backtra
 
 ### Warmup must fully prime submodules
 
-The ~5000 package definitions live in submodules (`(gnu packages base)`, `(gnu packages abiword)`, …) that Guile loads **lazily** on first reference. `Repl::warmup()` runs `(fold-packages (lambda (_ acc) acc) #t)` to force every submodule to load *before* `warmup_done` flips.
+The ~5000 package definitions live in submodules (`(gnu packages base)`, `(gnu packages abiword)`, …) that Guile loads **lazily** on first reference. `Repl::warmup()` runs `(fold-packages (lambda (_ acc) acc) #t)` to force every submodule to load *before* `warmup_done` flips, followed by `(find-packages-by-name "")`, which builds the by-name index search uses to pair sandboxed variants (a second full traversal when `GUIX_PACKAGE_PATH` is set or the package cache isn't authoritative).
 
 If warmup only did `(use-modules (gnu packages))`, the user's first real `fold-packages` walk would still trigger lazy loading — and a mid-walk SIGINT would corrupt the module cache (Guile's loader marks the failed module as "failed to load: Interrupted", and downstream packages get `unbound variable` errors that look catastrophic in the GUI). Don't downgrade warmup.
 

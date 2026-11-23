@@ -5,6 +5,7 @@ use crate::error::GuixError;
 use crate::operation::{spawn_operation, Operation};
 use crate::parsers::recutils::{parse, parse_outputs, split_ws, Record};
 use crate::parsers::tsv;
+use crate::sandbox::{SandboxInfo, SandboxVariant};
 use crate::types::{Generation, InstalledPackage, PackageDetail, PackageSummary};
 use crate::Guix;
 
@@ -67,7 +68,15 @@ impl PackageOps {
     pub async fn list_installed(&self) -> Result<Vec<InstalledPackage>, GuixError> {
         let out = self.run(&["package", "-I"]).await?;
         let s = String::from_utf8_lossy(&out);
-        tsv::parse_installed(&s)
+        let mut installed = tsv::parse_installed(&s)?;
+        tokio::task::spawn_blocking(move || {
+            for entry in &mut installed {
+                entry.sandbox = read_sandbox_info(entry);
+            }
+            installed
+        })
+        .await
+        .map_err(|e| GuixError::Parse(format!("sandbox policy read task panicked: {e}")))
     }
 
     /// `guix package -l`.
@@ -85,9 +94,12 @@ impl PackageOps {
             .results)
     }
 
-    /// Each record is a 7-tuple `(name version synopsis description
-    /// homepage license (outputs ...))` — homepage/license normalized in
-    /// Guile so the Rust parser only sees strings.
+    /// Each record is an 8-tuple `(name version synopsis description
+    /// homepage license (outputs ...) variant)` — homepage/license
+    /// normalized in Guile so the Rust parser only sees strings. `variant`
+    /// is `(name . sandbox-alist)` of the package's `<name>-sandboxed`
+    /// counterpart, or `#f`. A sandboxed variant with a base package is
+    /// returned as its base row, never on its own.
     pub async fn search_fast_limited(
         &self,
         query: &str,
@@ -120,24 +132,56 @@ impl PackageOps {
                               ((list? l) \
                                (string-join (map one-license->str l) \", \")) \
                               (else (one-license->str l))))) \
+                    (sandbox-of \
+                      (lambda (p) \
+                        (let ((s (assq-ref (package-properties p) 'sandbox))) \
+                          (and (list? s) (every pair? s) \
+                               (string? (assq-ref s 'base)) \
+                               s)))) \
+                    (paired? \
+                      (lambda (b v) \
+                        (let ((s (sandbox-of v))) \
+                          (and s \
+                               (string=? (assq-ref s 'base) (package-name b)) \
+                               (string=? (package-version b) (package-version v)))))) \
+                    (variant-of \
+                      (lambda (p) \
+                        (find (lambda (v) (paired? p v)) \
+                              (find-packages-by-name \
+                                (string-append (package-name p) \"-sandboxed\"))))) \
+                    (base-of \
+                      (lambda (v) \
+                        (let ((base (assq-ref (sandbox-of v) 'base))) \
+                          (and (string=? (package-name v) \
+                                         (string-append base \"-sandboxed\")) \
+                               (find (lambda (b) (paired? b v)) \
+                                     (find-packages-by-name base)))))) \
                     (acc (call-with-current-continuation \
                            (lambda (return) \
+                             (define (emit p v a) \
+                               (let ((a* (cons (list (package-name p) \
+                                                     (package-version p) \
+                                                     (str-or-empty (package-synopsis p)) \
+                                                     (str-or-empty (package-description p)) \
+                                                     (homepage->str (package-home-page p)) \
+                                                     (license->str (package-license p)) \
+                                                     (package-outputs p) \
+                                                     (and v (cons (package-name v) \
+                                                                  (sandbox-of v)))) \
+                                               a))) \
+                                 (set! count (+ count 1)) \
+                                 (if (>= count limit) \
+                                     (begin (set! truncated? #t) (return a*)) \
+                                     a*))) \
                              (fold-packages \
                                (lambda (p a) \
-                                 (if (string-contains (package-name p) {q}) \
-                                     (let ((a* (cons (list (package-name p) \
-                                                           (package-version p) \
-                                                           (str-or-empty (package-synopsis p)) \
-                                                           (str-or-empty (package-description p)) \
-                                                           (homepage->str (package-home-page p)) \
-                                                           (license->str (package-license p)) \
-                                                           (package-outputs p)) \
-                                                     a))) \
-                                       (set! count (+ count 1)) \
-                                       (if (>= count limit) \
-                                           (begin (set! truncated? #t) (return a*)) \
-                                           a*)) \
-                                     a)) \
+                                 (cond ((not (string-contains (package-name p) {q})) a) \
+                                       ((sandbox-of p) \
+                                        (let ((b (base-of p))) \
+                                          (cond ((not b) (emit p #f a)) \
+                                                ((string-contains (package-name b) {q}) a) \
+                                                (else (emit b p a))))) \
+                                       (else (emit p (variant-of p) a)))) \
                                '()))))) \
                 (cons truncated? acc))",
             limit = limit,
@@ -146,7 +190,12 @@ impl PackageOps {
 
         let value = repl
             .eval_with_modules(
-                &["(gnu packages)", "(guix packages)", "(guix licenses)"],
+                &[
+                    "(gnu packages)",
+                    "(guix packages)",
+                    "(guix licenses)",
+                    "(srfi srfi-1)",
+                ],
                 &form,
             )
             .await?;
@@ -175,6 +224,13 @@ impl PackageOps {
         let mut argv: Vec<&str> = vec!["-i"];
         argv.extend(packages.iter().copied());
         let payload = crate::repl::op::build_package_payload(self.profile(), &argv)?;
+        crate::repl::op::spawn_repl_op(self.binary(), &payload)
+    }
+
+    /// Removes one entry and installs another in a single transaction.
+    pub fn swap(&self, remove: &str, install: &str) -> Result<Operation, GuixError> {
+        let payload =
+            crate::repl::op::build_package_payload(self.profile(), &swap_argv(remove, install))?;
         crate::repl::op::spawn_repl_op(self.binary(), &payload)
     }
 
@@ -221,6 +277,19 @@ impl PackageOps {
         let c = guix_cmd(self.binary(), self.profile(), true, ["package", "-d", spec]);
         spawn_operation(c)
     }
+}
+
+pub(crate) fn swap_argv<'a>(remove: &'a str, install: &'a str) -> [&'a str; 4] {
+    ["-r", remove, "-i", install]
+}
+
+fn read_sandbox_info(entry: &InstalledPackage) -> Option<SandboxInfo> {
+    let base = entry.name.strip_suffix("-sandboxed")?;
+    let file = entry
+        .store_path
+        .join("share/sandbox")
+        .join(format!("{base}.scm"));
+    SandboxInfo::from_file_text(&std::fs::read_to_string(file).ok()?)
 }
 
 fn scheme_str_escape(s: &str) -> String {
@@ -281,6 +350,7 @@ fn parse_records(value: lexpr::Value) -> Vec<PackageSummary> {
         let mut homepage = String::new();
         let mut license = String::new();
         let mut outputs: Vec<String> = Vec::new();
+        let mut sandbox = None;
         for (i, (field, _)) in record_cell.into_iter().enumerate() {
             match i {
                 0 => name = value_to_string(field),
@@ -290,6 +360,7 @@ fn parse_records(value: lexpr::Value) -> Vec<PackageSummary> {
                 4 => homepage = value_to_string(field),
                 5 => license = value_to_string(field),
                 6 => outputs = value_to_string_list(field),
+                7 => sandbox = value_to_variant(&field),
                 _ => {}
             }
         }
@@ -304,9 +375,18 @@ fn parse_records(value: lexpr::Value) -> Vec<PackageSummary> {
             homepage,
             license,
             outputs,
+            sandbox,
         });
     }
     out
+}
+
+fn value_to_variant(v: &lexpr::Value) -> Option<SandboxVariant> {
+    let (name, alist) = v.as_pair()?;
+    Some(SandboxVariant {
+        name: name.as_str()?.to_owned(),
+        info: SandboxInfo::from_value(alist)?,
+    })
 }
 
 fn record_to_summary(r: Record) -> PackageSummary {
@@ -318,6 +398,7 @@ fn record_to_summary(r: Record) -> PackageSummary {
         homepage: r.get("homepage").map(str::to_owned).unwrap_or_default(),
         license: r.get("license").map(str::to_owned).unwrap_or_default(),
         outputs: r.get("outputs").map(parse_outputs).unwrap_or_default(),
+        sandbox: None,
     }
 }
 
@@ -407,6 +488,116 @@ mod tests {
         let results = parse_records(spine);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].outputs, vec!["out".to_owned()]);
+    }
+
+    fn parse_one(record: &str) -> PackageSummary {
+        let mut results = parse_records(lexpr::from_str(&format!("({record})")).expect("lexpr"));
+        assert_eq!(results.len(), 1);
+        results.remove(0)
+    }
+
+    const HEAD: &str =
+        r#""transmission" "4.1.4" "s" "d" "https://transmissionbt.com" "GPL2" ("out" "gui")"#;
+
+    #[test]
+    fn eighth_element_parses_variant() {
+        let p = parse_one(&format!(
+            r#"({HEAD} ("transmission-sandboxed" (base . "transmission") (output . "gui") (policy (network? . #t) (dbus-rules))))"#
+        ));
+        assert_eq!(p.outputs, vec!["out", "gui"]);
+        let v = p.sandbox.expect("variant");
+        assert_eq!(v.name, "transmission-sandboxed");
+        assert_eq!(v.info.base, "transmission");
+        assert_eq!(v.info.output, "gui");
+        assert!(v.info.policy.network);
+    }
+
+    #[test]
+    fn eighth_element_false_is_none() {
+        let p = parse_one(&format!("({HEAD} #f)"));
+        assert_eq!(p.name, "transmission");
+        assert_eq!(p.sandbox, None);
+    }
+
+    #[test]
+    fn seven_elements_is_none() {
+        let p = parse_one(&format!("({HEAD})"));
+        assert_eq!(p.license, "GPL2");
+        assert_eq!(p.sandbox, None);
+    }
+
+    #[test]
+    fn unparseable_variant_is_none() {
+        for bad in [
+            r#""x-sandboxed""#,
+            r#"(x-sandboxed (base . "x") (output . "out") (policy))"#,
+            r#"("x-sandboxed" (output . "out") (policy))"#,
+            "42",
+        ] {
+            let p = parse_one(&format!("({HEAD} {bad})"));
+            assert_eq!(p.sandbox, None, "{bad}");
+        }
+    }
+
+    fn installed_entry(name: &str, store: &std::path::Path) -> InstalledPackage {
+        InstalledPackage {
+            name: name.into(),
+            version: "4.1.4".into(),
+            output: "out".into(),
+            store_path: store.to_path_buf(),
+            sandbox: None,
+        }
+    }
+
+    fn write_policy(store: &std::path::Path, text: &str) {
+        let dir = store.join("share/sandbox");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(dir.join("transmission.scm"), text).expect("write");
+    }
+
+    #[test]
+    fn read_sandbox_info_reads_policy_file() {
+        let store = tempfile::tempdir().expect("tempdir");
+        write_policy(
+            store.path(),
+            r#"((base . "transmission") (output . "gui") (policy (network? . #t)))"#,
+        );
+        let info = read_sandbox_info(&installed_entry("transmission-sandboxed", store.path()))
+            .expect("info");
+        assert_eq!(info.base, "transmission");
+        assert_eq!(info.output, "gui");
+        assert!(info.policy.network);
+        assert_eq!(
+            read_sandbox_info(&installed_entry("transmission", store.path())),
+            None
+        );
+    }
+
+    #[test]
+    fn read_sandbox_info_absent_file_is_none() {
+        let store = tempfile::tempdir().expect("tempdir");
+        assert_eq!(
+            read_sandbox_info(&installed_entry("transmission-sandboxed", store.path())),
+            None
+        );
+    }
+
+    #[test]
+    fn read_sandbox_info_corrupt_file_is_none() {
+        let store = tempfile::tempdir().expect("tempdir");
+        write_policy(store.path(), "((base . \"transmission\"");
+        assert_eq!(
+            read_sandbox_info(&installed_entry("transmission-sandboxed", store.path())),
+            None
+        );
+    }
+
+    #[test]
+    fn swap_argv_orders_remove_before_install() {
+        assert_eq!(
+            swap_argv("transmission:gui", "transmission-sandboxed"),
+            ["-r", "transmission:gui", "-i", "transmission-sandboxed"]
+        );
     }
 
     #[test]

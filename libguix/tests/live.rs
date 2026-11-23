@@ -207,6 +207,71 @@ async fn repl_search_fast_limited_reports_truncation() {
     );
 }
 
+/// Needs panther's `transmission-sandboxed` with the `sandbox` property,
+/// e.g. `GUIX_PACKAGE_PATH=~/git/panther`.
+#[tokio::test]
+async fn repl_search_fast_pairs_sandboxed_variant() {
+    let g = Guix::discover().await.expect("discover");
+    let repl = g.repl().await.expect("repl spawn");
+    let has_property = repl
+        .eval_with_modules(
+            &["(gnu packages)", "(guix packages)", "(srfi srfi-1)"],
+            "(any (lambda (p) (pair? (assq-ref (package-properties p) 'sandbox))) \
+                  (find-packages-by-name \"transmission-sandboxed\"))",
+        )
+        .await
+        .expect("property probe")
+        .as_bool()
+        == Some(true);
+    if !has_property {
+        assert!(
+            std::env::var_os("GUIX_PACKAGE_PATH").is_none(),
+            "GUIX_PACKAGE_PATH is set but transmission-sandboxed has no `sandbox` property"
+        );
+        eprintln!("skipping: transmission-sandboxed has no `sandbox` property");
+        return;
+    }
+
+    let ops = g.package();
+    let results = ops.search_fast("transmission").await.expect("search");
+    let base = results
+        .iter()
+        .find(|p| p.name == "transmission")
+        .expect("transmission row");
+    let variant = base.sandbox.as_ref().expect("variant attached");
+    assert_eq!(variant.name, "transmission-sandboxed");
+    assert_eq!(variant.info.output, "gui");
+    assert!(
+        results.iter().all(|p| !p.name.ends_with("-sandboxed")),
+        "unexpected -sandboxed row: {:?}",
+        results.iter().map(|p| &p.name).collect::<Vec<_>>()
+    );
+    let total = results.len();
+
+    let results = ops
+        .search_fast("transmission-sandboxed")
+        .await
+        .expect("variant search");
+    let names: Vec<_> = results.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["transmission"]);
+    assert!(results[0].sandbox.is_some());
+
+    // Traversal order varies with the channel setup, so cut at every limit.
+    for limit in 1..=total {
+        let res = ops
+            .search_fast_limited("transmission", limit)
+            .await
+            .expect("limited search");
+        assert_eq!(res.results.len(), limit);
+        for p in &res.results {
+            assert!(!p.name.ends_with("-sandboxed"), "limit {limit}: {}", p.name);
+            if p.name == "transmission" {
+                assert!(p.sandbox.is_some(), "limit {limit}: variant missing");
+            }
+        }
+    }
+}
+
 /// M5: `warmup` is a fast idempotent no-op once the modules are loaded.
 #[tokio::test]
 async fn repl_warmup_is_idempotent() {

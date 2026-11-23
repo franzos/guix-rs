@@ -1,13 +1,15 @@
 use iced::widget::{
-    button, column, container, image, row, scrollable, text, text_input, Column, Row, Space,
+    button, column, container, image, row, scrollable, text, text_input, toggler, Column, Row,
+    Space,
 };
 use iced::{Element, Length};
-use libguix::PackageSummary;
+use libguix::{InstalledPackage, PackageSummary, SandboxInfo};
 
-use crate::app::{App, Message, SearchError};
+use crate::app::{App, Message, PendingSwap, SearchError};
 use crate::app_metadata::AppMetadata;
 use crate::carrier::Carrier;
 use crate::styles::{self, BOLD, MUTED};
+use crate::views::sandbox::{install_state, permissions_block, InstallState, SessionType};
 
 const SYNOPSIS_CHAR_LIMIT: usize = 120;
 
@@ -206,23 +208,38 @@ fn detail_pane(app: &App) -> Element<'_, Message> {
         );
     }
 
-    let already_installed = app.installed.packages.iter().any(|ip| ip.name == p.name);
     let busy = app.active_op.is_some();
-    let action_btn = if already_installed {
-        let msg = (!busy).then(|| Message::RemoveRequested(p.name.clone()));
-        button(text(crate::t!("search-remove")).size(13))
-            .padding([8, 20])
-            .style(styles::btn_danger)
-            .on_press_maybe(msg)
-    } else {
-        let msg = (!busy).then(|| Message::InstallRequested(p.name.clone()));
-        button(text(crate::t!("search-install")).size(13))
-            .padding([8, 20])
-            .style(styles::btn_primary)
-            .on_press_maybe(msg)
-    };
+    let state = install_state(&app.installed.packages, &p.name);
+    let switch_on = sandbox_switch_on(state, app.search.sandboxed);
+    if let Some(variant) = p.sandbox.as_ref() {
+        col = col.push(
+            toggler(switch_on)
+                .label(crate::t!("sandbox-label"))
+                .text_size(13)
+                .on_toggle_maybe((!busy).then_some(Message::SandboxToggled)),
+        );
+        if switch_on {
+            col = col.push(permissions_block(&variant.info, app.session));
+        }
+    }
+
     col = col.push(Space::new().height(Length::Fixed(4.0)));
-    col = col.push(row![action_btn].spacing(8));
+    if let Some(pending) = app.search.pending_swap.as_ref() {
+        let info = p.sandbox.as_ref().map(|v| &v.info);
+        col = col.push(confirm_swap_card(pending, info, app.session, busy));
+    } else {
+        let action_btn = match pane_action(p, &app.installed.packages, app.search.sandboxed) {
+            PaneAction::Remove(spec) => button(text(crate::t!("search-remove")).size(13))
+                .padding([8, 20])
+                .style(styles::btn_danger)
+                .on_press_maybe((!busy).then(|| Message::RemoveRequested(spec))),
+            PaneAction::Install(name) => button(text(crate::t!("search-install")).size(13))
+                .padding([8, 20])
+                .style(styles::btn_primary)
+                .on_press_maybe((!busy).then(|| Message::InstallRequested(name))),
+        };
+        col = col.push(row![action_btn].spacing(8));
+    }
 
     if app.settings.app_metadata.enabled {
         if let Some(strip) = screenshots_strip(metadata, cached.is_some()) {
@@ -232,6 +249,66 @@ fn detail_pane(app: &App) -> Element<'_, Message> {
     }
 
     col.into()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PaneAction {
+    Install(String),
+    Remove(String),
+}
+
+/// Installed rows, either mode, only offer Remove so both modes never end up side by side.
+pub fn pane_action(
+    row: &PackageSummary,
+    installed: &[InstalledPackage],
+    sandboxed: bool,
+) -> PaneAction {
+    match install_state(installed, &row.name) {
+        InstallState::Plain(ip) | InstallState::Sandboxed(ip) => PaneAction::Remove(ip.spec()),
+        InstallState::NotInstalled => PaneAction::Install(match row.sandbox.as_ref() {
+            Some(v) if sandboxed => v.name.clone(),
+            _ => row.name.clone(),
+        }),
+    }
+}
+
+pub fn sandbox_switch_on(state: InstallState<'_>, sandboxed: bool) -> bool {
+    match state {
+        InstallState::NotInstalled => sandboxed,
+        InstallState::Plain(_) => false,
+        InstallState::Sandboxed(_) => true,
+    }
+}
+
+fn confirm_swap_card<'a>(
+    pending: &PendingSwap,
+    info: Option<&SandboxInfo>,
+    session: SessionType,
+    busy: bool,
+) -> Column<'a, Message> {
+    let header = text(crate::t!("sandbox-swap-title", name = pending.base.clone()))
+        .size(14)
+        .font(BOLD);
+    let blurb = if pending.to_sandboxed {
+        crate::t!("sandbox-swap-to-sandboxed-blurb")
+    } else {
+        crate::t!("sandbox-swap-to-plain-blurb")
+    };
+    let mut col: Column<'a, Message> =
+        column![header, text(blurb).size(12).color(MUTED)].spacing(6);
+    if let Some(info) = info.filter(|_| pending.to_sandboxed) {
+        col = col.push(permissions_block(info, session));
+    }
+
+    let confirm = button(text(crate::t!("sandbox-swap-confirm")).size(13))
+        .padding([8, 16])
+        .style(styles::btn_primary)
+        .on_press_maybe((!busy).then_some(Message::SwapConfirmed));
+    let cancel = button(text(crate::t!("common-cancel")).size(13))
+        .padding([8, 16])
+        .style(styles::btn_ghost)
+        .on_press(Message::SwapCancelled);
+    col.push(row![confirm, cancel].spacing(8))
 }
 
 /// Horizontal scroll of screenshot thumbnails when at least one is
@@ -311,5 +388,120 @@ fn truncate(s: &str, n: usize) -> String {
         let mut out: String = s.chars().take(n).collect();
         out.push('…');
         out
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use std::path::PathBuf;
+
+    use libguix::{SandboxPolicy, SandboxVariant};
+
+    use super::*;
+
+    fn info(base: &str, output: &str) -> SandboxInfo {
+        SandboxInfo {
+            base: base.to_owned(),
+            output: output.to_owned(),
+            policy: SandboxPolicy::default(),
+        }
+    }
+
+    /// `output` is the wrapped output of `name` when `variant` is set.
+    pub(crate) fn summary(name: &str, variant: Option<&str>, output: &str) -> PackageSummary {
+        PackageSummary {
+            name: name.to_owned(),
+            version: "1.0".to_owned(),
+            synopsis: String::new(),
+            description: String::new(),
+            homepage: String::new(),
+            license: String::new(),
+            outputs: vec![output.to_owned()],
+            sandbox: variant.map(|v| SandboxVariant {
+                name: v.to_owned(),
+                info: info(name, output),
+            }),
+        }
+    }
+
+    pub(crate) fn installed(
+        name: &str,
+        output: &str,
+        sandbox: Option<(&str, &str)>,
+    ) -> InstalledPackage {
+        InstalledPackage {
+            name: name.to_owned(),
+            version: "1.0".to_owned(),
+            output: output.to_owned(),
+            store_path: PathBuf::from("/gnu/store/x"),
+            sandbox: sandbox.map(|(b, o)| info(b, o)),
+        }
+    }
+
+    #[test]
+    fn not_installed_installs_selected_mode() {
+        let row = summary("transmission", Some("transmission-sandboxed"), "gui");
+        assert_eq!(
+            pane_action(&row, &[], false),
+            PaneAction::Install("transmission".to_owned())
+        );
+        assert_eq!(
+            pane_action(&row, &[], true),
+            PaneAction::Install("transmission-sandboxed".to_owned())
+        );
+    }
+
+    #[test]
+    fn row_without_variant_ignores_switch() {
+        let row = summary("hello", None, "out");
+        assert_eq!(
+            pane_action(&row, &[], true),
+            PaneAction::Install("hello".to_owned())
+        );
+        let list = vec![installed("hello", "out", None)];
+        assert_eq!(
+            pane_action(&row, &list, false),
+            PaneAction::Remove("hello:out".to_owned())
+        );
+    }
+
+    #[test]
+    fn only_variant_installed_offers_remove_of_variant() {
+        let row = summary("transmission", Some("transmission-sandboxed"), "gui");
+        let list = vec![installed(
+            "transmission-sandboxed",
+            "out",
+            Some(("transmission", "gui")),
+        )];
+        assert!(matches!(
+            install_state(&list, &row.name),
+            InstallState::Sandboxed(_)
+        ));
+        for sandboxed in [false, true] {
+            assert_eq!(
+                pane_action(&row, &list, sandboxed),
+                PaneAction::Remove("transmission-sandboxed:out".to_owned())
+            );
+        }
+    }
+
+    #[test]
+    fn plain_installed_offers_remove_of_plain() {
+        let row = summary("transmission", Some("transmission-sandboxed"), "gui");
+        let list = vec![installed("transmission", "gui", None)];
+        assert_eq!(
+            pane_action(&row, &list, true),
+            PaneAction::Remove("transmission:gui".to_owned())
+        );
+    }
+
+    #[test]
+    fn switch_position() {
+        let plain = installed("foo", "out", None);
+        let boxed = installed("foo-sandboxed", "out", Some(("foo", "out")));
+        assert!(!sandbox_switch_on(InstallState::NotInstalled, false));
+        assert!(sandbox_switch_on(InstallState::NotInstalled, true));
+        assert!(!sandbox_switch_on(InstallState::Plain(&plain), true));
+        assert!(sandbox_switch_on(InstallState::Sandboxed(&boxed), false));
     }
 }

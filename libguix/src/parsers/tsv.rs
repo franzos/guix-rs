@@ -92,6 +92,7 @@ fn parse_pkg_row(line: &str, lineno: usize) -> Result<InstalledPackage, GuixErro
         version: cols[1].trim().to_owned(),
         output: cols[2].trim().to_owned(),
         store_path: PathBuf::from(cols[3].trim()),
+        sandbox: None,
     })
 }
 

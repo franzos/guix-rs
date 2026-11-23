@@ -60,6 +60,7 @@ op-upgrade = Atualizando pacotes do usuário
 op-pull = Buscando o catálogo do usuário
 op-system-pull = Buscando o catálogo do sistema
 op-reconfigure = Reconfigurando o sistema
+op-swap = Trocando o modo de sandbox
 
 # -- stages --
 stage-starting = Iniciando
@@ -392,3 +393,31 @@ channels-form-url-required = A URL é obrigatória.
 channels-form-intro-required = O commit de introdução e o fingerprint são obrigatórios.
 channels-vanished-after-write = O channels.scm sumiu depois da gravação — atualize a aba.
 channels-reverted-to-baseline = Seu último canal foi removido. Seus canais do sistema voltaram a valer.
+
+# -- sandboxed variants --
+sandbox-label = Em sandbox
+sandbox-permissions-title = O que o sandbox permite
+sandbox-perm-none = Nada além dos próprios arquivos
+sandbox-perm-network = Acesso à rede
+sandbox-perm-audio = Áudio: reprodução e microfone
+sandbox-perm-camera = Câmera
+sandbox-perm-gpu = Aceleração gráfica (GPU)
+sandbox-perm-user-namespaces = Namespaces de usuário (o app cria o próprio sandbox interno)
+sandbox-perm-file-args = Arquivos passados na linha de comando (somente leitura)
+sandbox-perm-read-folders = Pode ler
+sandbox-perm-write-folders = Pode ler e gravar
+sandbox-perm-display-wayland = Tela: Wayland
+sandbox-perm-display-x11 = Tela: X11 (o app pode ler a entrada e a tela de outras janelas)
+sandbox-perm-display-none = Sem acesso à tela
+sandbox-dbus-notifications = Notificações da área de trabalho
+sandbox-dbus-keyring = Chaveiro de senhas
+sandbox-dbus-tray = Ícone na bandeja
+sandbox-dbus-screencast = Captura de tela (você escolhe o que é compartilhado)
+sandbox-dbus-settings = Configurações de tema e esquema de cores
+sandbox-dbus-open = Abrir arquivos em outros apps
+sandbox-dbus-other = Outras regras de D-Bus
+sandbox-unknown-fields = Outros campos da política
+sandbox-swap-title = Trocar o modo de sandbox de { $name }
+sandbox-swap-to-sandboxed-blurb = O app precisa ser reiniciado. No sandbox ele só vê as pastas listadas abaixo; arquivos em outros lugares não ficam visíveis para ele.
+sandbox-swap-to-plain-blurb = O app precisa ser reiniciado. Sem o sandbox ele alcança tudo o que a sua conta de usuário alcança.
+sandbox-swap-confirm = Confirmar troca

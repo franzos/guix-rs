@@ -2,6 +2,8 @@
 
 use std::path::PathBuf;
 
+use crate::sandbox::{SandboxInfo, SandboxVariant};
+
 /// Empty strings rather than `Option` — these are display fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageSummary {
@@ -12,6 +14,7 @@ pub struct PackageSummary {
     pub homepage: String,
     pub license: String,
     pub outputs: Vec<String>,
+    pub sandbox: Option<SandboxVariant>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +37,14 @@ pub struct InstalledPackage {
     pub version: String,
     pub output: String,
     pub store_path: PathBuf,
+    pub sandbox: Option<SandboxInfo>,
+}
+
+impl InstalledPackage {
+    /// `name:output`.
+    pub fn spec(&self) -> String {
+        format!("{}:{}", self.name, self.output)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

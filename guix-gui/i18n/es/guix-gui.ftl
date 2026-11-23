@@ -60,6 +60,7 @@ op-upgrade = Actualizando paquetes de usuario
 op-pull = Obteniendo catálogo de usuario
 op-system-pull = Obteniendo catálogo del sistema
 op-reconfigure = Reconfigurando el sistema
+op-swap = Cambiando el modo de sandbox
 
 # -- stages --
 stage-starting = Iniciando
@@ -392,3 +393,31 @@ channels-form-url-required = La URL es obligatoria.
 channels-form-intro-required = El commit de introducción y la huella son obligatorios.
 channels-vanished-after-write = channels.scm desapareció tras la escritura — actualiza la pestaña.
 channels-reverted-to-baseline = Se eliminó tu último canal. Tus canales del sistema vuelven a estar en efecto.
+
+# -- sandboxed variants --
+sandbox-label = En sandbox
+sandbox-permissions-title = Qué permite el sandbox
+sandbox-perm-none = Nada más allá de sus propios archivos
+sandbox-perm-network = Acceso a la red
+sandbox-perm-audio = Audio: reproducción y micrófono
+sandbox-perm-camera = Cámara
+sandbox-perm-gpu = Aceleración gráfica (GPU)
+sandbox-perm-user-namespaces = Espacios de nombres de usuario (la app crea su propio sandbox interno)
+sandbox-perm-file-args = Archivos pasados en la línea de órdenes (solo lectura)
+sandbox-perm-read-folders = Puede leer
+sandbox-perm-write-folders = Puede leer y escribir
+sandbox-perm-display-wayland = Pantalla: Wayland
+sandbox-perm-display-x11 = Pantalla: X11 (la app puede leer la entrada y la pantalla de otras ventanas)
+sandbox-perm-display-none = Sin acceso a la pantalla
+sandbox-dbus-notifications = Notificaciones de escritorio
+sandbox-dbus-keyring = Llavero de contraseñas
+sandbox-dbus-tray = Icono en la bandeja
+sandbox-dbus-screencast = Captura de pantalla (tú eliges qué se comparte)
+sandbox-dbus-settings = Ajustes de tema y esquema de color
+sandbox-dbus-open = Abrir archivos en otras apps
+sandbox-dbus-other = Otras reglas de D-Bus
+sandbox-unknown-fields = Otros campos de la política
+sandbox-swap-title = Cambiar el modo de sandbox de { $name }
+sandbox-swap-to-sandboxed-blurb = Hay que reiniciar la app. En el sandbox solo ve las carpetas listadas abajo; los archivos en otros lugares no son visibles para ella.
+sandbox-swap-to-plain-blurb = Hay que reiniciar la app. Sin el sandbox alcanza todo lo que alcanza tu cuenta de usuario.
+sandbox-swap-confirm = Confirmar cambio

@@ -17,6 +17,7 @@ pub enum OpKind {
     Install,
     Remove,
     Upgrade,
+    Swap,
     Pull,
     SystemPull,
     Reconfigure,
@@ -28,10 +29,18 @@ impl OpKind {
             OpKind::Install => crate::t!("op-install"),
             OpKind::Remove => crate::t!("op-remove"),
             OpKind::Upgrade => crate::t!("op-upgrade"),
+            OpKind::Swap => crate::t!("op-swap"),
             OpKind::Pull => crate::t!("op-pull"),
             OpKind::SystemPull => crate::t!("op-system-pull"),
             OpKind::Reconfigure => crate::t!("op-reconfigure"),
         }
+    }
+
+    pub fn changes_profile(self) -> bool {
+        matches!(
+            self,
+            OpKind::Install | OpKind::Remove | OpKind::Upgrade | OpKind::Swap
+        )
     }
 }
 
@@ -175,5 +184,20 @@ mod tests {
         let c = OpId::next();
         assert!(b.0 > a.0);
         assert!(c.0 > b.0);
+    }
+
+    #[test]
+    fn changes_profile_only_for_profile_ops() {
+        for k in [
+            OpKind::Install,
+            OpKind::Remove,
+            OpKind::Upgrade,
+            OpKind::Swap,
+        ] {
+            assert!(k.changes_profile(), "{k:?}");
+        }
+        for k in [OpKind::Pull, OpKind::SystemPull, OpKind::Reconfigure] {
+            assert!(!k.changes_profile(), "{k:?}");
+        }
     }
 }

@@ -59,6 +59,7 @@ op-upgrade = Mise à jour des paquets utilisateur
 op-pull = Récupération du catalogue utilisateur
 op-system-pull = Récupération du catalogue système
 op-reconfigure = Reconfiguration du système
+op-swap = Changement du mode bac à sable
 
 # -- stages --
 stage-starting = Démarrage
@@ -389,3 +390,31 @@ channels-form-url-required = L'URL est requise.
 channels-form-intro-required = Le commit d'introduction et l'empreinte sont requis.
 channels-vanished-after-write = channels.scm a disparu après l'écriture — actualise l'onglet.
 channels-reverted-to-baseline = Ton dernier canal a été supprimé. Tes canaux système sont de nouveau actifs.
+
+# -- sandboxed variants --
+sandbox-label = Bac à sable
+sandbox-permissions-title = Ce que le bac à sable autorise
+sandbox-perm-none = Rien en dehors de ses propres fichiers
+sandbox-perm-network = Accès au réseau
+sandbox-perm-audio = Audio : lecture et microphone
+sandbox-perm-camera = Caméra
+sandbox-perm-gpu = Accélération graphique (GPU)
+sandbox-perm-user-namespaces = Espaces de noms utilisateur (l'appli crée son propre bac à sable interne)
+sandbox-perm-file-args = Fichiers passés en ligne de commande (lecture seule)
+sandbox-perm-read-folders = Peut lire
+sandbox-perm-write-folders = Peut lire et écrire
+sandbox-perm-display-wayland = Affichage : Wayland
+sandbox-perm-display-x11 = Affichage : X11 (l'appli peut lire les saisies et l'écran des autres fenêtres)
+sandbox-perm-display-none = Aucun accès à l'affichage
+sandbox-dbus-notifications = Notifications du bureau
+sandbox-dbus-keyring = Trousseau de mots de passe
+sandbox-dbus-tray = Icône de la zone de notification
+sandbox-dbus-screencast = Capture d'écran (tu choisis ce qui est partagé)
+sandbox-dbus-settings = Réglages de thème et de jeu de couleurs
+sandbox-dbus-open = Ouvrir des fichiers dans d'autres applis
+sandbox-dbus-other = Autres règles D-Bus
+sandbox-unknown-fields = Autres champs de la politique
+sandbox-swap-title = Changer le mode bac à sable de { $name }
+sandbox-swap-to-sandboxed-blurb = L'appli doit être redémarrée. Dans le bac à sable, elle ne voit que les dossiers listés ci-dessous ; les fichiers situés ailleurs ne lui sont pas visibles.
+sandbox-swap-to-plain-blurb = L'appli doit être redémarrée. Sans le bac à sable, elle atteint tout ce que ton compte utilisateur atteint.
+sandbox-swap-confirm = Confirmer le changement

@@ -62,6 +62,7 @@ op-upgrade = Upgrading user packages
 op-pull = Fetching user catalog
 op-system-pull = Fetching system catalog
 op-reconfigure = Reconfiguring system
+op-swap = Switching sandbox mode
 
 # -- stages --
 stage-starting = Starting
@@ -400,3 +401,31 @@ channels-form-url-required = URL is required.
 channels-form-intro-required = Introduction commit and fingerprint are required.
 channels-vanished-after-write = channels.scm vanished after write — refresh the tab.
 channels-reverted-to-baseline = Removed your last channel. Your system channels are back in effect.
+
+# -- sandboxed variants --
+sandbox-label = Sandboxed
+sandbox-permissions-title = What the sandbox allows
+sandbox-perm-none = Nothing beyond its own files
+sandbox-perm-network = Network access
+sandbox-perm-audio = Audio: playback and microphone
+sandbox-perm-camera = Camera
+sandbox-perm-gpu = Graphics acceleration (GPU)
+sandbox-perm-user-namespaces = User namespaces (the app builds its own inner sandbox)
+sandbox-perm-file-args = Files passed on the command line (read-only)
+sandbox-perm-read-folders = Can read
+sandbox-perm-write-folders = Can read and write
+sandbox-perm-display-wayland = Display: Wayland
+sandbox-perm-display-x11 = Display: X11 (the app can read other windows' input and screen)
+sandbox-perm-display-none = No display access
+sandbox-dbus-notifications = Desktop notifications
+sandbox-dbus-keyring = Password keyring
+sandbox-dbus-tray = Tray icon
+sandbox-dbus-screencast = Screen capture (you choose what is shared)
+sandbox-dbus-settings = Theme and colour-scheme settings
+sandbox-dbus-open = Open files in other apps
+sandbox-dbus-other = Other D-Bus rules
+sandbox-unknown-fields = Other policy fields
+sandbox-swap-title = Switch sandbox mode for { $name }
+sandbox-swap-to-sandboxed-blurb = The app needs a restart. Sandboxed, it only sees the folders listed below; files elsewhere are not visible to it.
+sandbox-swap-to-plain-blurb = The app needs a restart. Without the sandbox it can reach everything your user account can.
+sandbox-swap-confirm = Confirm switch

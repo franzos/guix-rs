@@ -10,6 +10,7 @@ use iced::{Alignment, Element, Length};
 use crate::app::{App, IconCacheEntry, Message};
 use crate::recommended::{self, RecommendedApp};
 use crate::styles::{self, BOLD, MUTED, TEXT};
+use crate::views::sandbox::{install_state, InstallState};
 
 const TILES_PER_ROW: usize = 3;
 const TILE_HEIGHT: f32 = 96.0;
@@ -82,7 +83,10 @@ fn category_grid<'a>(app: &'a App, apps: &[&'static RecommendedApp]) -> Element<
 }
 
 fn tile<'a>(app: &'a App, ra: &'static RecommendedApp) -> Element<'a, Message> {
-    let installed = app.installed.packages.iter().any(|p| p.name == ra.name);
+    let installed = !matches!(
+        install_state(&app.installed.packages, ra.name),
+        InstallState::NotInstalled
+    );
 
     let icon: Element<'a, Message> = if app.settings.app_metadata.enabled {
         match app.home_icons.get(ra.name) {
